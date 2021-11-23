@@ -1,4 +1,4 @@
-mode: lgsvl
+mode: webcam
 velocity: 2
 steer_sensitivity: 0.03
 debug_window: True

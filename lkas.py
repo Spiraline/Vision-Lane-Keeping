@@ -303,7 +303,7 @@ class lane_keeping_module:
     def config_image_source(self, mode='webcam'):
         if mode == 'webcam':
             # VideoCapture(n) : n th input device (PC : 0, minicar : 1)
-            self.capture = cv2.VideoCapture(0)
+            self.capture = cv2.VideoCapture(1)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
         elif mode == 'video':
