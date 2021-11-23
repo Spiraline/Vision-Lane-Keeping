@@ -312,6 +312,7 @@ class lane_keeping_module:
 
     def config_image_source(self, mode='webcam'):
         if mode == 'webcam':
+            print('hi')
             # VideoCapture(n) : n th input device (PC : 0, minicar : 1)
             self.capture = cv2.VideoCapture(0)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
@@ -383,7 +384,7 @@ class lane_keeping_module:
     def twist_publisher(self):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
-            original_image = self.capture.read()
+            _, original_image = self.capture.read()
 
             self.filter_thr_dict['saturation_thr'][0] = cv2.getTrackbarPos("[clr]sat_min", "TrackBar")
             self.filter_thr_dict['saturation_thr'][1] = cv2.getTrackbarPos("[clr]sat_max", "TrackBar")
@@ -397,11 +398,7 @@ class lane_keeping_module:
 
             cv2.waitKey(1)
 
-            try:
-                birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
-            except Exception as e:
-                print(e)
-                continue
+            birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
             filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
             sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
 
