@@ -68,9 +68,9 @@ def birdeye_warp(img, birdeye_warp_param):
     # Tunable Parameter
     top = birdeye_warp_param['top']
     bottom = birdeye_warp_param['bottom']
-    top_margin = birdeye_warp_param['top_margin']
-    bottom_margin = birdeye_warp_param['bottom_margin']
-    birdeye_margin = birdeye_warp_param['birdeye_margin']
+    top_margin = birdeye_warp_param['top_width']
+    bottom_margin = birdeye_warp_param['bottom_width']
+    birdeye_margin = birdeye_warp_param['birdeye_width']
 
     # 4 Source coordinates
     src1 = [x_mid + top_margin, top] # top_right
@@ -285,7 +285,51 @@ class lane_keeping_module:
     def __init__(self, mode):
         self.twist_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
         self.mode = mode
+        self.filter_thr_dict = {
+            'saturation_thr' : [50, 200],
+            'x_grad_thr' : [0, 100],
+            'red_thr' : [150, 250]
+        }
+
+        self.birdeye_warp_param = {
+            'top' : 0,
+            'bottom' : 140,
+            'top_width' : 120,
+            'bottom_width' : 220,
+            'birdeye_width' : 130
+        }
+
+        self.trackbar_img = np.zeros((1,400), np.uint8)
+
+        # Create Window
+        cv2.namedWindow('original_image')
+        cv2.namedWindow('birdeye_image')
+        cv2.namedWindow('sliding_window')
+        cv2.namedWindow('filtered_birdeye')
+        cv2.namedWindow('TrackBar')
+
+        # Move Window Location              #col    #row
+        cv2.moveWindow('original_image',    350*0,  350*0)
+        cv2.moveWindow('birdeye_image',     350*0,  350*1)
+        cv2.moveWindow('sliding_window',    350*1,  350*0)
+        cv2.moveWindow('filtered_birdeye',  350*1,  350*1)
+        cv2.moveWindow('TrackBar',          350*2,  350*0)
+
+        # Create Trackbar
+        cv2.createTrackbar("[clr]sat_min", "TrackBar", self.filter_thr_dict['saturation_thr'][0], 255, self.onChange)
+        cv2.createTrackbar("[clr]sat_max", "TrackBar", self.filter_thr_dict['saturation_thr'][1], 255, self.onChange)
+        cv2.createTrackbar("[clr]red_min", "TrackBar", self.filter_thr_dict['red_thr'][0], 255, self.onChange)
+        cv2.createTrackbar("[clr]red_max", "TrackBar", self.filter_thr_dict['red_thr'][1], 255, self.onChange)
+        cv2.createTrackbar("[be]top", "TrackBar", self.birdeye_warp_param['top'], 240, self.onChange)
+        cv2.createTrackbar("[be]bottom", "TrackBar", self.birdeye_warp_param['bottom'], 240, self.onChange)
+        cv2.createTrackbar("[be]top_width", "TrackBar", self.birdeye_warp_param['top_width'], 320, self.onChange)
+        cv2.createTrackbar("[be]bottom_width", "TrackBar", self.birdeye_warp_param['bottom_width'], 320, self.onChange)
+        cv2.createTrackbar("[be]birdeye_width", "TrackBar", self.birdeye_warp_param['birdeye_width'], 320, self.onChange)
+
         self.config_image_source(mode)
+
+    def onChange(self, pos):
+        pass
 
     def config_image_source(self, mode='webcam'):
         if mode == 'webcam':
@@ -312,24 +356,35 @@ class lane_keeping_module:
         np_arr = np.fromstring(data.data, np.uint8)
         image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-        # LGSVL may not publish image
-        birdeye_image = birdeye_warp(image_np, birdeye_warp_param)
-        filtered_birdeye = color_gradient_filter(birdeye_image, filter_thr_dict)
+        self.filter_thr_dict['saturation_thr'][0] = cv2.getTrackbarPos("[clr]sat_min", "TrackBar")
+        self.filter_thr_dict['saturation_thr'][1] = cv2.getTrackbarPos("[clr]sat_max", "TrackBar")
+        self.filter_thr_dict['red_thr'][0] = cv2.getTrackbarPos("[clr]red_min", "TrackBar")
+        self.filter_thr_dict['red_thr'][1] = cv2.getTrackbarPos("[clr]red_max", "TrackBar")
+        self.birdeye_warp_param['top'] = cv2.getTrackbarPos("[be]top", "TrackBar")
+        self.birdeye_warp_param['bottom'] = cv2.getTrackbarPos("[be]bottom", "TrackBar")
+        self.birdeye_warp_param['top_width'] = cv2.getTrackbarPos("[be]top_width", "TrackBar")
+        self.birdeye_warp_param['bottom_width'] = cv2.getTrackbarPos("[be]bottom_width", "TrackBar")
+        self.birdeye_warp_param['birdeye_width'] = cv2.getTrackbarPos("[be]birdeye_width", "TrackBar")
+
+        cv2.waitKey(1)
+
+        birdeye_image = birdeye_warp(image_np, self.birdeye_warp_param)
+        filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
         sliding_window, slope_value = detect_lane_pixels(filtered_birdeye, base_slope)
+
+        cv2.imshow('TrackBar', self.trackbar_img)
 
         cv2.imshow('original_image', image_np)
         cv2.imshow('birdeye_image', birdeye_image)
         cv2.imshow('sliding_window', sliding_window)
         cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
-        
-        cv2.waitKey(1)
+
+        # print('-------------------------------')
+        # print('Slope : ', round(slope_value, 2))
+        # print('Angle : ', round(angle, 3))
 
         msg = TwistStamped()
         velocity, angle = self.calculate_velocity_and_angle(slope_value)
-
-        print('-------------------------------')
-        print('Slope : ', round(slope_value, 2))
-        print('Angle : ', round(angle, 3))
 
         msg.twist.linear.x = velocity
         msg.twist.angular.z = angle
@@ -384,17 +439,17 @@ if __name__ == '__main__':
     mode = 'lgsvl'
 
     birdeye_warp_param = {
-        'top' : 80,
+        'top' : 0,
         'bottom' : 140,
-        'top_margin' : 120,
-        'bottom_margin' : 180,
-        'birdeye_margin' : 130
+        'top_width' : 120,
+        'bottom_width' : 220,
+        'birdeye_width' : 130
     }
 
     filter_thr_dict = {
-        'saturation_thr' : (150, 200),
+        'saturation_thr' : (100, 200),
         'x_grad_thr' : (0, 100),
-        'red_thr' : (215,255)
+        'red_thr' : (150, 255)
     }
 
     base_slope = {

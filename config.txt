@@ -1,0 +1,4 @@
+- LGSVL
+'saturation_thr' : [50, 200],
+'x_grad_thr' : [0, 100],
+'red_thr' : [150, 250]
