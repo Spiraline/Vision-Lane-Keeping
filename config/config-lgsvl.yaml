@@ -1,0 +1,13 @@
+mode: lgsvl
+velocity: 2
+steer_sensitivity: 0.03
+birdeye_warp_param:
+  top: 0
+  bottom: 140
+  top_width: 120
+  bottom_width: 220
+  birdeye_width: 130
+filter_thr_dict:
+  saturation_thr: [100,200]
+  x_grad_thr: [0,100]
+  red_thr: [150,255]
