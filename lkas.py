@@ -58,7 +58,9 @@ def find_firstfit(binary_array, direction, lower_threshold=20) :
             return i
     return np.argmax(binary_array)
 
-def color_gradient_transform(img, s_thresh=(150, 200), sx_thresh=(0, 100), r_thresh=(215,255)):
+
+# TODO : every thresh are tunable
+def color_gradient_filter(img, s_thresh=(150, 200), sx_thresh=(0, 100), r_thresh=(215,255)):
     img = np.copy(img)
     
     R = img[:,:,0]
@@ -96,21 +98,13 @@ def color_gradient_transform(img, s_thresh=(150, 200), sx_thresh=(0, 100), r_thr
     combined_binary[(s_binary == 1) | (sxbinary == 1) & (rbinary == 1)] = 1
     #combined_binary[(s_binary == 1) | (rbinary == 1)] = 1
     
-    return color_binary, combined_binary
+    return combined_binary
 
-def warp(img):
-    
+def birdeye_warp(img):
     x_size = img.shape[1]
     y_size = img.shape[0]
-    
-    # 320*240 ver
-    # x_mid = x_size/2
-    # top_margin = 70
-    # bottom_margin = 250
-    # top = 80
-    # bottom = 200
-    # bird_eye_margin = 250
 
+    # Tunable Parameter
     x_mid = x_size/2
     top_margin = 120
     bottom_margin = 180
@@ -133,13 +127,13 @@ def warp(img):
     dst = np.float32([dst1, dst2, dst3, dst4])
 
     # Given src and dst points, calculate the perspective transform matrix
-    M = cv2.getPerspectiveTransform(src, dst)
+    trans_matrix = cv2.getPerspectiveTransform(src, dst)
     # Warp the image using OpenCV warpPerspective()
     img_size = (img.shape[1], img.shape[0])
-    warped = cv2.warpPerspective(img, M, img_size)
+    birdeye_warped = cv2.warpPerspective(img, trans_matrix, img_size)
     
     # Return the resulting image and matrix
-    return warped, M
+    return birdeye_warped
 
 def detect_lane_pixels(binary_warped):
     global prev_left_fit
@@ -148,9 +142,9 @@ def detect_lane_pixels(binary_warped):
     out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
     midpoint = np.int(binary_warped.shape[1]/2)
     hj_window = 60
+    nwindows = 24
     leftx_base = find_firstfit(np.sum(binary_warped[-hj_window:,:midpoint], axis=0), 1)
     rightx_base = find_firstfit(np.sum(binary_warped[-hj_window:,midpoint:], axis=0), -1) + midpoint
-    nwindows = 24
     window_height = np.int(binary_warped.shape[0]/nwindows)
     
     nonzero = binary_warped.nonzero()
@@ -358,60 +352,6 @@ def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty
 
     return left_curverad, right_curverad
 
-def advanced_lane_detection_pipeline(original_image):
-    global xm_per_pix
-    global prev_left_curv
-    global prev_right_curv
-    global prev_left_fitx
-    global prev_right_fitx
-    global cnt
-    
-    warped, M = warp(original_image)
-    warped_color_binary, binary_warped = color_gradient_transform(warped)
-    
-    # Detect Lane pixels
-    sliding_window, sv = detect_lane_pixels(binary_warped)
-    # Get curvature of each lane
-    # try:
-    #     left_curverad, right_curverad = determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty)
-    #     # Prevent
-    #     curv_threshold = 5
-
-    #     if cnt >= 1:
-    #         if left_curverad < 90:
-    #             left_fitx = prev_left_fitx
-    #         if right_curverad < 90:
-    #             right_fitx = prev_right_fitx
-    # except:
-    #     crossection = 1
-        
-    # pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
-    # pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
-    # pts = np.hstack((pts_left, pts_right))
-
-    # if crossection == False:
-        # Center offset
-        # calc_center = (pts_right[0][0][0] + pts_left[0][-1][0]) / 2
-        # center_offset = (calc_center - original_image.shape[1]/2)
-
-    # else:
-        # center_offset = 0
-
-    # prevent disturb
-    # if cnt >= 1:
-    #     if abs(center_offset) >= 3.00:
-    #         left_fitx = prev_left_fitx
-    #         right_fitx = prev_right_fitx
-
-    # prev_left_fitx = left_fitx
-    # prev_right_fitx = right_fitx
-    # cnt += 1
-    
-   
-    # result = original_image
-
-    return binary_warped, sliding_window, warped, sv
-
 class lane_keeping_module:
     def __init__(self):
         self.twist_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
@@ -452,18 +392,21 @@ class lane_keeping_module:
     def twist_publisher(self):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
-            ret, frame = self.capture.read()
-            cv2.imshow('cv_img', frame)
-        
-            binary_warped, sliding_window, warped, sv = advanced_lane_detection_pipeline(frame)
-            cv2.imshow('cv_w', warped)
-            cv2.imshow('cv_sliding_w', sliding_window)
-            cv2.imshow('cv_bw', (binary_warped*255).astype(np.uint8))
+            _, original_image = self.capture.read()
+
+            birdeye_image = birdeye_warp(original_image)
+            filtered_birdeye = color_gradient_filter(birdeye_image)
+            sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
+
+            cv2.imshow('original_image', original_image)
+            cv2.imshow('birdeye_image', birdeye_image)
+            cv2.imshow('sliding_window', sliding_window)
+            cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
             
             cv2.waitKey(1)
 
             msg = TwistStamped()
-            velocity, angle = self.calculate_velocity_and_angle(sv)
+            velocity, angle = self.calculate_velocity_and_angle(slope_value)
             msg.twist.linear.x = velocity
             msg.twist.angular.z = angle
             self.twist_pub.publish(msg)
