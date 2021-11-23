@@ -2,45 +2,13 @@
 import numpy as np
 import rospy
 import cv2
-import ctypes
 
 from sensor_msgs.msg import CompressedImage
 from geometry_msgs.msg import TwistStamped
 from cv_bridge import CvBridge, CvBridgeError
 
-prev_left_curv = None
-prev_right_curv = None
-prev_left_fitx = None
-prev_right_fitx = None
-go_state = 0 # 0: straight 1: left 2: right
-cnt = 0
-
 ym_per_pix = 30/720 # meters per pixel in y dimension
 xm_per_pix = 3.7/70
-
-prev_left_fit = None
-prev_linear_left_fit = None
-
-prev_right_fit = None
-prev_linear_right_fit = None
-
-__all__ = ["monotonic_time"]
-
-CLOCK_MONOTONIC_RAW = 4 # see <linux/time.h>
-
-class timespec(ctypes.Structure):
-    _fields_ = [
-        ('tv_sec', ctypes.c_long),
-        ('tv_nsec', ctypes.c_long)
-    ]
-
-librt = ctypes.CDLL('librt.so.1', use_errno=True)
-clock_gettime = librt.clock_gettime
-clock_gettime.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
-
-# Seonghyeon 
-prev_pts_left = None
-prev_pts_right = None
 
 def find_firstfit(binary_array, direction, lower_threshold=20) :
     start, end = (binary_array.shape[0]-1, -1) if direction == -1 else (0, binary_array.shape[0])
@@ -92,17 +60,17 @@ def color_gradient_filter(img, filter_thr_dict):
     
     return combined_binary
 
-def birdeye_warp(img):
+def birdeye_warp(img, birdeye_warp_param):
     x_size = img.shape[1]
     y_size = img.shape[0]
+    x_mid = x_size/2
 
     # Tunable Parameter
-    x_mid = x_size/2
-    top_margin = 120
-    bottom_margin = 180
-    top = 70
-    bottom = 140
-    bird_eye_margin = 130
+    top = birdeye_warp_param['top']
+    bottom = birdeye_warp_param['bottom']
+    top_margin = birdeye_warp_param['top_margin']
+    bottom_margin = birdeye_warp_param['bottom_margin']
+    birdeye_margin = birdeye_warp_param['birdeye_margin']
 
     # 4 Source coordinates
     src1 = [x_mid + top_margin, top] # top_right
@@ -112,10 +80,10 @@ def birdeye_warp(img):
     src = np.float32([src1, src2, src3, src4])
 
     # 4 destination coordinates
-    dst1 = [x_mid + bird_eye_margin, 0]
-    dst2 = [x_mid + bird_eye_margin, y_size]
-    dst3 = [x_mid - bird_eye_margin, y_size]
-    dst4 = [x_mid - bird_eye_margin, 0]
+    dst1 = [x_mid + birdeye_margin, 0]
+    dst2 = [x_mid + birdeye_margin, y_size]
+    dst3 = [x_mid - birdeye_margin, y_size]
+    dst4 = [x_mid - birdeye_margin, 0]
     dst = np.float32([dst1, dst2, dst3, dst4])
 
     # Given src and dst points, calculate the perspective transform matrix
@@ -128,9 +96,6 @@ def birdeye_warp(img):
     return birdeye_warped
 
 def detect_lane_pixels(filtered_img, base_slope):
-    global prev_left_fit
-    global prev_right_fit
-
     ##### Tunable parameter
     hj_window = 60 # TODO : What's this?
     windows_num = 24
@@ -317,10 +282,10 @@ def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty
     return left_curverad, right_curverad
 
 class lane_keeping_module:
-    def __init__(self):
+    def __init__(self, mode):
         self.twist_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
-        # self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed',CompressedImage,self.callback)
-        # self.capture = cv2.VideoCapture(0)
+        self.mode = mode
+        self.config_image_source(mode)
 
     def config_image_source(self, mode='webcam'):
         if mode == 'webcam':
@@ -329,6 +294,8 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
         elif mode == 'lgsvl':
+            self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed', CompressedImage, self.image_callback)
+            self.image_np = None
             # TODO
             pass
         elif mode == 'video':
@@ -342,17 +309,29 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
+    def image_callback(self, data):
+        np_arr = np.fromstring(data.data, np.uint8)
+        self.image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
     def calculate_velocity_and_angle(self, slope_value):
         velocity = 0.2
         angle = (slope_value)/625
         return velocity, angle
 
-    def twist_publisher(self, filter_thr_dict, base_slope):
+    def twist_publisher(self, birdeye_warp_param, filter_thr_dict, base_slope):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
-            _, original_image = self.capture.read()
+            if self.mode == 'lgsvl':
+                original_image = self.image_np
+            else:
+                _, original_image = self.capture.read()
 
-            birdeye_image = birdeye_warp(original_image)
+            # LGSVL may not publish image
+            try:
+                birdeye_image = birdeye_warp(original_image, birdeye_warp_param)
+            except:
+                continue
+
             filtered_birdeye = color_gradient_filter(birdeye_image, filter_thr_dict)
             sliding_window, slope_value = detect_lane_pixels(filtered_birdeye, base_slope)
 
@@ -383,6 +362,14 @@ if __name__ == '__main__':
 
     ### Tunable Parameter
     # TODO : get from cfg
+    birdeye_warp_param = {
+        'top' : 0,
+        'bottom' : 140,
+        'top_margin' : 120,
+        'bottom_margin' : 180,
+        'birdeye_margin' : 130
+    }
+
     filter_thr_dict = {
         'saturation_thr' : (150, 200),
         'x_grad_thr' : (0, 100),
@@ -394,6 +381,6 @@ if __name__ == '__main__':
         'right' : 200
     }
 
-    ic = lane_keeping_module()
-    ic.config_image_source()
-    ic.twist_publisher(filter_thr_dict, base_slope)
+    # Mode : webcam, lgsvl, video
+    ic = lane_keeping_module(mode = 'webcam')
+    ic.twist_publisher(birdeye_warp_param, filter_thr_dict, base_slope)
