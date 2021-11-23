@@ -2,3 +2,11 @@
 'saturation_thr' : [50, 200],
 'x_grad_thr' : [0, 100],
 'red_thr' : [150, 250]
+
+self.birdeye_warp_param = {
+    'top' : 0,
+    'bottom' : 75,
+    'top_width' : 150,
+    'bottom_width' : 220,
+    'birdeye_width' : 120
+}
