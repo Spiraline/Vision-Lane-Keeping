@@ -441,7 +441,9 @@ class lane_keeping_module:
         #dsize = (width, height)
         #output = cv2.resize(img, dsize)
         #capture = cv2.VideoCapture(video_file)
-        capture = cv2.VideoCapture(1)
+
+        # VideoCapture(0 or 1) : Using Webcam
+        capture = cv2.VideoCapture(0)
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
@@ -480,20 +482,8 @@ def f(x, m, n):
     y = m*x + n
     return y
 
-def main(args):
-  ic = lane_keeping_module()
-  rospy.init_node('lane_keeping_module')
-  ic.minicar_publisher()
-  # print_file_path = os.getenv("HOME") + "/Documents/tmp/LKAS.csv"
-
-  # with open(print_file_path , "w") as f:
-  #    pass
-
-#   try:
-#     rospy.spin()
-#   except KeyboardInterrupt:
-#     print("Shutting down")
-#   cv2.destroyAllWindows()
-
 if __name__ == '__main__':
-    main(sys.argv)
+    rospy.init_node('lane_keeping_module')
+
+    ic = lane_keeping_module()
+    ic.minicar_publisher()    
