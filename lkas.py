@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import numpy as np
-from numpy.lib.polynomial import poly1d
-from numpy.linalg.linalg import slogdet
 import rospy
 import cv2
 import sys
@@ -16,7 +14,6 @@ import ctypes
 
 from sensor_msgs.msg import CompressedImage
 from geometry_msgs.msg import TwistStamped
-from autoware_msgs.msg import VehicleCmd
 from cv_bridge import CvBridge, CvBridgeError
 
 prev_left_curv = None
@@ -416,40 +413,46 @@ def advanced_lane_detection_pipeline(original_image):
     return binary_warped, sliding_window, warped, sv
 
 class lane_keeping_module:
-    
     def __init__(self):
-        self.image_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
+        self.twist_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
         # self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed',CompressedImage,self.callback)
+        # self.capture = cv2.VideoCapture(0)
 
-    def lane_keeping_params(self, slope_value):
+    def config_image_source(self, mode='webcam'):
+        if mode == 'webcam':
+            # VideoCapture(n) : n th input device (PC : 0, minicar : 1)
+            self.capture = cv2.VideoCapture(0)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+        elif mode == 'lgsvl':
+            # TODO
+            pass
+        elif mode == 'video':
+            video_file = './test_video.avi'
+            img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
+            width = 320
+            height = 240
+            dsize = (width, height)
+            output = cv2.resize(img, dsize)
+            self.capture = cv2.VideoCapture(video_file)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+
+    def calculate_velocity_and_angle(self, slope_value):
         velocity = 0.2
-        # angle = center_offset * (-1) / 20
         
         angle = (slope_value)/625
         # if slope_right:
-        #    angle = (slope_right - b_slope_right)/500 
-        print(angle)
+        #    angle = (slope_right - b_slope_right)/500
+        print("angle : ", angle)
         
         return velocity, angle
 
-    def minicar_publisher(self):
-        
-        #video_file = './test_video.avi'
-        #img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
-        #width = 320
-        #height = 240
-        #dsize = (width, height)
-        #output = cv2.resize(img, dsize)
-        #capture = cv2.VideoCapture(video_file)
-
-        # VideoCapture(0 or 1) : Using Webcam
-        capture = cv2.VideoCapture(0)
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-
+    def twist_publisher(self):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
-            ret, frame = capture.read()
+            ret, frame = self.capture.read()
             cv2.imshow('cv_img', frame)
         
             binary_warped, sliding_window, warped, sv = advanced_lane_detection_pipeline(frame)
@@ -460,22 +463,13 @@ class lane_keeping_module:
             cv2.waitKey(1)
 
             msg = TwistStamped()
-            velocity, angle = self.lane_keeping_params(sv)
+            velocity, angle = self.calculate_velocity_and_angle(sv)
             msg.twist.linear.x = velocity
             msg.twist.angular.z = angle
-            self.image_pub.publish(msg)
+            self.twist_pub.publish(msg)
             rate.sleep()
-
-            # except:
-            #     msg = TwistStamped()
-            #     msg.twist.linear.x = 0.2
-            #     msg.twist.angular.z = 0 
-            #     self.image_pub.publish(msg)
-            #     # print("new Period5")
-            #     cv2.waitKey(1)
-            #     rate.sleep()
             
-        capture.release()
+        self.capture.release()
         cv2.destroyAllWindows()
 
 def f(x, m, n):
@@ -486,4 +480,5 @@ if __name__ == '__main__':
     rospy.init_node('lane_keeping_module')
 
     ic = lane_keeping_module()
-    ic.minicar_publisher()    
+    ic.config_image_source()
+    ic.twist_publisher()
