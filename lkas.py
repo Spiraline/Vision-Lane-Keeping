@@ -8,8 +8,8 @@ from sensor_msgs.msg import CompressedImage
 from geometry_msgs.msg import TwistStamped
 from cv_bridge import CvBridge, CvBridgeError
 
-ym_per_pix = 30/720 # meters per pixel in y dimension
-xm_per_pix = 3.7/70
+X_M_PER_PIX = 3.7/70
+Y_M_PER_PIX = 30/720 # meters per pixel in y dimension
 
 def find_firstfit(binary_array, direction, lower_threshold=20) :
     start, end = (binary_array.shape[0]-1, -1) if direction == -1 else (0, binary_array.shape[0])
@@ -123,10 +123,6 @@ def detect_lane_pixels(filtered_img):
     left_lane_inds = []
     right_lane_inds = []
     
-    # Do we need labeling?
-    # cnt, labels, stats, centroids = cv2.connectedComponentsWithStats(filtered_img)
-    # print(centroids)
-    # Step through the windows one by one
     left_cnt = 0
     right_cnt = 0
     isCurve = False # TODO : Do we need this variable?
@@ -149,7 +145,6 @@ def detect_lane_pixels(filtered_img):
         
         # Identify the nonzero pixels in x and y within the window
         good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
-        # print(nonzerox.shape, nonzeroy.shape)
         
         # If you found > minpix pixels, recenter next window on their mean position
         if len(good_left_inds) > minpix:
@@ -208,7 +203,6 @@ def detect_lane_pixels(filtered_img):
     righty = nonzeroy[right_lane_inds] 
 
     ### Fit a first order polynomial to each
-
     try:
         linear_slope_left = np.polyfit(leftx, lefty, 1)[0]*-1
         left_lane_angle = math.degrees(math.atan(linear_slope_left))
@@ -248,8 +242,8 @@ def detect_lane_pixels(filtered_img):
     return out_img, angle_value # out_image = sliding window image
     
 def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty):
-    global ym_per_pix
-    global xm_per_pix
+    global X_M_PER_PIX
+    global Y_M_PER_PIX
     # Define y-value where we want radius of curvature
     # I'll choose the maximum y-value, corresponding to the bottom of the image
     y_eval = np.max(ploty)
@@ -257,19 +251,18 @@ def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty
     right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
 
     # Fit new polynomials to x,y in world space
-    left_fit_cr = np.polyfit(lefty*ym_per_pix, leftx*xm_per_pix, 2)
-    right_fit_cr = np.polyfit(righty*ym_per_pix, rightx*xm_per_pix, 2)
+    left_fit_cr = np.polyfit(lefty*Y_M_PER_PIX, leftx*X_M_PER_PIX, 2)
+    right_fit_cr = np.polyfit(righty*Y_M_PER_PIX, rightx*X_M_PER_PIX, 2)
     # Calculate the new radii of curvature
-    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*Y_M_PER_PIX + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*Y_M_PER_PIX + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
     # Now our radius of curvature is in meters
 
     return left_curverad, right_curverad
 
 class lane_keeping_module:
-    def __init__(self, mode):
+    def __init__(self):
         self.twist_pub = rospy.Publisher('twist_cmd', TwistStamped, queue_size = 10)
-        self.mode = mode
         self.filter_thr_dict = {
             'saturation_thr' : [50, 200],
             'x_grad_thr' : [0, 100],
@@ -284,6 +277,7 @@ class lane_keeping_module:
             'birdeye_width' : 120
         }
 
+        self.velocity = 2
         self.steer_sensitivity = 0.03
 
         self.trackbar_img = np.zeros((1,400), np.uint8)
@@ -313,8 +307,6 @@ class lane_keeping_module:
         cv2.createTrackbar("[be]bottom_width", "TrackBar", self.birdeye_warp_param['bottom_width'], 320, self.onChange)
         cv2.createTrackbar("[be]birdeye_width", "TrackBar", self.birdeye_warp_param['birdeye_width'], 320, self.onChange)
 
-        self.config_image_source(mode)
-
     def onChange(self, pos):
         pass
 
@@ -324,20 +316,32 @@ class lane_keeping_module:
             self.capture = cv2.VideoCapture(0)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-        elif mode == 'lgsvl':
-            self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed', CompressedImage, self.image_callback)
-            self.image_np = None
-            rospy.spin()
         elif mode == 'video':
             video_file = './test_video.avi'
             img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
             width = 320
             height = 240
             dsize = (width, height)
-            output = cv2.resize(img, dsize)
             self.capture = cv2.VideoCapture(video_file)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+    def calculate_velocity_and_angle(self, angle_value):
+        velocity = self.velocity
+        if angle_value > 0:
+            target_angle = 90 - angle_value
+        elif angle_value < 0:
+            target_angle = -90 - angle_value
+        else:
+            target_angle = 0
+
+        target_angle = target_angle * self.steer_sensitivity * -1
+        
+        return velocity, target_angle
+
+    def lgsvl_spinner(self):
+        self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed', CompressedImage, self.image_callback)
+        rospy.spin()
 
     def image_callback(self, data):
         np_arr = np.fromstring(data.data, np.uint8)
@@ -376,32 +380,28 @@ class lane_keeping_module:
         msg.twist.angular.z = angle
         self.twist_pub.publish(msg)
 
-    # Version 1
-    def calculate_velocity_and_angle(self, angle_value):
-        velocity = 2
-        # angle = (slope_value)/self.steer_insensitivity
-
-        if angle_value > 0:
-            target_angle = 90 - angle_value
-        elif angle_value < 0:
-            target_angle = (90 - abs(angle_value))*-1
-        else:
-            target_angle = 0        
-
-        target_angle = target_angle * self.steer_sensitivity * -1
-        
-        return velocity, target_angle
-
     def twist_publisher(self):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
-            if self.mode == 'lgsvl':
-                original_image = self.image_np
-            else:
-                _, original_image = self.capture.read()
+            original_image = self.capture.read()
 
-            # LGSVL may not publish image
-            birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
+            self.filter_thr_dict['saturation_thr'][0] = cv2.getTrackbarPos("[clr]sat_min", "TrackBar")
+            self.filter_thr_dict['saturation_thr'][1] = cv2.getTrackbarPos("[clr]sat_max", "TrackBar")
+            self.filter_thr_dict['red_thr'][0] = cv2.getTrackbarPos("[clr]red_min", "TrackBar")
+            self.filter_thr_dict['red_thr'][1] = cv2.getTrackbarPos("[clr]red_max", "TrackBar")
+            self.birdeye_warp_param['top'] = cv2.getTrackbarPos("[be]top", "TrackBar")
+            self.birdeye_warp_param['bottom'] = cv2.getTrackbarPos("[be]bottom", "TrackBar")
+            self.birdeye_warp_param['top_width'] = cv2.getTrackbarPos("[be]top_width", "TrackBar")
+            self.birdeye_warp_param['bottom_width'] = cv2.getTrackbarPos("[be]bottom_width", "TrackBar")
+            self.birdeye_warp_param['birdeye_width'] = cv2.getTrackbarPos("[be]birdeye_width", "TrackBar")
+
+            cv2.waitKey(1)
+
+            try:
+                birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
+            except Exception as e:
+                print(e)
+                continue
             filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
             sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
 
@@ -409,14 +409,13 @@ class lane_keeping_module:
             cv2.imshow('birdeye_image', birdeye_image)
             cv2.imshow('sliding_window', sliding_window)
             cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
-            
-            cv2.waitKey(1)
+
+            cv2.imshow('TrackBar', self.trackbar_img)
 
             msg = TwistStamped()
             velocity, angle = self.calculate_velocity_and_angle(slope_value)
 
             print('-------------------------------')
-            print('Slope : ', round(slope_value, 2))
             print('Angle : ', round(angle, 3))
 
             msg.twist.linear.x = velocity
@@ -424,8 +423,7 @@ class lane_keeping_module:
             self.twist_pub.publish(msg)
             rate.sleep()
         
-        if self.mode != 'lgsvl':
-            self.capture.release()
+        self.capture.release()
         cv2.destroyAllWindows()
 
 if __name__ == '__main__':
@@ -433,7 +431,7 @@ if __name__ == '__main__':
 
     ### Tunable Parameter
     # TODO : get from cfg
-    mode = 'lgsvl'
+    mode = 'webcam'
 
     birdeye_warp_param = {
         'top' : 0,
@@ -448,8 +446,12 @@ if __name__ == '__main__':
         'x_grad_thr' : (0, 100),
         'red_thr' : (150, 255)
     }
+
     # Mode : webcam, lgsvl, video
-    ic = lane_keeping_module(mode)
-    if mode != 'lgsvl':
-        ic.twist_publisher(birdeye_warp_param)
+    ic = lane_keeping_module()
+    if mode == 'lgsvl':
+        ic.lgsvl_spinner()
+    else:
+        ic.config_image_source(mode)
+        ic.twist_publisher()
 
