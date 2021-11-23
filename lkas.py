@@ -296,8 +296,7 @@ class lane_keeping_module:
         elif mode == 'lgsvl':
             self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed', CompressedImage, self.image_callback)
             self.image_np = None
-            # TODO
-            pass
+            rospy.spin()
         elif mode == 'video':
             video_file = './test_video.avi'
             img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
@@ -311,7 +310,30 @@ class lane_keeping_module:
 
     def image_callback(self, data):
         np_arr = np.fromstring(data.data, np.uint8)
-        self.image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        image_np = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        # LGSVL may not publish image
+        birdeye_image = birdeye_warp(image_np, birdeye_warp_param)
+        filtered_birdeye = color_gradient_filter(birdeye_image, filter_thr_dict)
+        sliding_window, slope_value = detect_lane_pixels(filtered_birdeye, base_slope)
+
+        cv2.imshow('original_image', image_np)
+        cv2.imshow('birdeye_image', birdeye_image)
+        cv2.imshow('sliding_window', sliding_window)
+        cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
+        
+        cv2.waitKey(1)
+
+        msg = TwistStamped()
+        velocity, angle = self.calculate_velocity_and_angle(slope_value)
+
+        print('-------------------------------')
+        print('Slope : ', round(slope_value, 2))
+        print('Angle : ', round(angle, 3))
+
+        msg.twist.linear.x = velocity
+        msg.twist.angular.z = angle
+        self.twist_pub.publish(msg)
 
     def calculate_velocity_and_angle(self, slope_value):
         velocity = 0.2
@@ -327,11 +349,7 @@ class lane_keeping_module:
                 _, original_image = self.capture.read()
 
             # LGSVL may not publish image
-            try:
-                birdeye_image = birdeye_warp(original_image, birdeye_warp_param)
-            except:
-                continue
-
+            birdeye_image = birdeye_warp(original_image, birdeye_warp_param)
             filtered_birdeye = color_gradient_filter(birdeye_image, filter_thr_dict)
             sliding_window, slope_value = detect_lane_pixels(filtered_birdeye, base_slope)
 
@@ -353,8 +371,9 @@ class lane_keeping_module:
             msg.twist.angular.z = angle
             self.twist_pub.publish(msg)
             rate.sleep()
-            
-        self.capture.release()
+        
+        if self.mode != 'lgsvl':
+            self.capture.release()
         cv2.destroyAllWindows()
 
 if __name__ == '__main__':
@@ -362,8 +381,10 @@ if __name__ == '__main__':
 
     ### Tunable Parameter
     # TODO : get from cfg
+    mode = 'lgsvl'
+
     birdeye_warp_param = {
-        'top' : 0,
+        'top' : 80,
         'bottom' : 140,
         'top_margin' : 120,
         'bottom_margin' : 180,
@@ -382,5 +403,5 @@ if __name__ == '__main__':
     }
 
     # Mode : webcam, lgsvl, video
-    ic = lane_keeping_module(mode = 'webcam')
+    ic = lane_keeping_module(mode)
     ic.twist_publisher(birdeye_warp_param, filter_thr_dict, base_slope)
