@@ -2,14 +2,6 @@
 import numpy as np
 import rospy
 import cv2
-import sys
-import platform
-import pickle
-import imutils
-import glob
-import rospkg
-import os
-import time
 import ctypes
 
 from sensor_msgs.msg import CompressedImage
@@ -52,15 +44,15 @@ prev_pts_right = None
 
 def find_firstfit(binary_array, direction, lower_threshold=20) :
     start, end = (binary_array.shape[0]-1, -1) if direction == -1 else (0, binary_array.shape[0])
-    # print(start, end, direction)
     for i in range(start, end, direction) :
         if binary_array[i] > lower_threshold :
             return i
     return np.argmax(binary_array)
 
-
-# TODO : every thresh are tunable
-def color_gradient_filter(img, s_thresh=(150, 200), sx_thresh=(0, 100), r_thresh=(215,255)):
+def color_gradient_filter(img, filter_thr_dict):
+    s_thresh = filter_thr_dict['saturation_thr']
+    sx_thresh = filter_thr_dict['x_grad_thr']
+    r_thresh = filter_thr_dict['red_thr']
     img = np.copy(img)
     
     R = img[:,:,0]
@@ -135,53 +127,54 @@ def birdeye_warp(img):
     # Return the resulting image and matrix
     return birdeye_warped
 
-def detect_lane_pixels(binary_warped):
+def detect_lane_pixels(filtered_img, base_slope):
     global prev_left_fit
     global prev_right_fit
+
+    ##### Tunable parameter
+    hj_window = 60 # TODO : What's this?
+    windows_num = 24
+    margin = 30 # Set the width of the windows +/- margin
+    minpix = 10 # Set minimum number of pixels found to recenter window
+
+
+
+    out_img = np.dstack((filtered_img, filtered_img, filtered_img))*255
+    midpoint = np.int(filtered_img.shape[1]/2)
+    leftx_base = find_firstfit(np.sum(filtered_img[-hj_window:,:midpoint], axis=0), 1)
+    rightx_base = find_firstfit(np.sum(filtered_img[-hj_window:,midpoint:], axis=0), -1) + midpoint
+    window_height = np.int(filtered_img.shape[0]/windows_num)
     
-    out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
-    midpoint = np.int(binary_warped.shape[1]/2)
-    hj_window = 60
-    nwindows = 24
-    leftx_base = find_firstfit(np.sum(binary_warped[-hj_window:,:midpoint], axis=0), 1)
-    rightx_base = find_firstfit(np.sum(binary_warped[-hj_window:,midpoint:], axis=0), -1) + midpoint
-    window_height = np.int(binary_warped.shape[0]/nwindows)
-    
-    nonzero = binary_warped.nonzero()
+    nonzero = filtered_img.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
+
     # Current positions to be updated for each window
     leftx_current = leftx_base
     rightx_current = rightx_base
-    # Set the width of the windows +/- margin
-    # margin = 100
-    margin = 30
-    # Set minimum number of pixels found to recenter window
-    minpix = 10
 
     # Create empty lists to receive left and right lane pixel indices
     left_lane_inds = []
     right_lane_inds = []
-
     
     # Do we need labeling?
-    # cnt, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_warped)
+    # cnt, labels, stats, centroids = cv2.connectedComponentsWithStats(filtered_img)
     # print(centroids)
     # Step through the windows one by one
     left_cnt = 0
     right_cnt = 0
-    state = 0 ## 0 is straight 1 is curve
+    isCurve = False # TODO : Do we need this variable?
     num = 0
     # for Left Lane
-    for window in range(24):
+    for window in range(windows_num):
         if left_cnt > 10:
             break
         # Identify window boundaries in x and y (and right and left)
         
-        if state == 0:
-            win_y_low = binary_warped.shape[0] - (num+1)*window_height
-            win_y_high = binary_warped.shape[0] - num*window_height
-            num += 1        
+        if not isCurve:
+            win_y_low = filtered_img.shape[0] - (num+1)*window_height
+            win_y_high = filtered_img.shape[0] - num*window_height
+            num += 1
         win_xleft_low = leftx_current - margin
         win_xleft_high = leftx_current + margin
         
@@ -191,7 +184,6 @@ def detect_lane_pixels(binary_warped):
         # Identify the nonzero pixels in x and y within the window
         good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
         # print(nonzerox.shape, nonzeroy.shape)
-        
         
         # If you found > minpix pixels, recenter next window on their mean position
         if len(good_left_inds) > minpix:
@@ -212,8 +204,6 @@ def detect_lane_pixels(binary_warped):
                 #win_xleft_low = np.int(np.median(nonzerox[good_left_inds]))
                 # good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
                 leftx_current = np.int(np.median(nonzerox[good_left_inds]))
-                
-                
             ## straight
             else:    
                 leftx_current = np.int(np.median(nonzerox[good_left_inds]))
@@ -224,17 +214,16 @@ def detect_lane_pixels(binary_warped):
         # Append these indices to the lists
         left_lane_inds.append(good_left_inds)
 
-    # print('---------------------------------------------------------------')
-    state = 0
+    isCurve = False
     num = 0
     # for Right Lane
-    for window in range(24):
+    for window in range(windows_num):
         if right_cnt > 5:
             break
-        if state == 0:
-            win_y_low = binary_warped.shape[0] - (num+1)*window_height
-            win_y_high = binary_warped.shape[0] - num*window_height
-            num += 1    
+        if not isCurve:
+            win_y_low = filtered_img.shape[0] - (num+1)*window_height
+            win_y_high = filtered_img.shape[0] - num*window_height
+            num += 1
         win_xright_low = rightx_current - margin
         win_xright_high = rightx_current + margin
         cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
@@ -249,83 +238,58 @@ def detect_lane_pixels(binary_warped):
     left_line_err = 0
     right_line_err = 0
 
-    # Concatenate the arrays of indices
+    ### Concatenate the arrays of indices
     if len(left_lane_inds) > 0:
         left_lane_inds = np.concatenate(left_lane_inds)
     else:
         left_line_err = 1
     right_lane_inds = np.concatenate(right_lane_inds)
     
-    # Extract left and right line pixel positions
+    ### Extract left and right line pixel positions
     leftx = nonzerox[left_lane_inds]
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds] 
 
-    
-    # Fit a second order polynomial to each
+    ### Fit a first order polynomial to each
     try:
         linear_slope_left = np.polyfit(lefty, leftx, 1)
-        # left_fit = np.polyfit(lefty, leftx, 2)
-        
     except:
         left_line_err = 1
         
     try:
         linear_slope_right = np.polyfit(righty, rightx, 1)
-        # right_fit = np.polyfit(righty, rightx, 2)
-
     except:
         right_line_err = 1
         
-    
-    # Generate x and y values for plotting
-    
-    # ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
-    # Handle Errors with Detecting Lines
-    # left_fitx = []
-    # right_fitx = []
+    ### Generate x and y values for plotting
     slope_left = []
     slope_right = []
     slope_value = 0
-    ## Left Lane Fail
+
+    # Left Lane Fail (Only Right Lane detected)
     if left_line_err == 1 and right_line_err == 0:
         # slope_left =  np.poly1d(linear_slope_left)
         slope_right =  np.poly1d(linear_slope_right)
-        slope_value = 200 - slope_right[0]
+        slope_value = base_slope['right'] - slope_right[0]
 
-    ## Right Lane Fail
+    # Right Lane Fail (Only Left Lane detected)
     elif left_line_err == 0 and right_line_err == 1:
         slope_left =  np.poly1d(linear_slope_left)
         # slope_right =  np.poly1d(linear_slope_left)
-        slope_value = 80 - slope_left[0]
+        slope_value = base_slope['left'] - slope_left[0]
     
+    # If two Lane are detected, see left lane
+    # TODO : maybe need change
     elif left_line_err == 0 and right_line_err == 0:
         slope_left =  np.poly1d(linear_slope_left)
         slope_right =  np.poly1d(linear_slope_right)
-        slope_value = 80 - slope_left[0]
-
-
+        slope_value = base_slope['left'] - slope_left[0]
 
     out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
     out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
 
     window_img = np.zeros_like(out_img)
-    
-    #if left_line_err == 1 and right_line_err == 1:
-    #    slope_left.append(80) 
-    #    slope_right.append(200)
-    
-    #else: 
-    #    for idx in range(320):
-    #        slope_left_idx = slope_left(idx)
-    #        slope_right_idx = slope_right(idx)
-    #        if slope_left[0] < 0:
-    #            slope_left_idx = slope_right_idx
-    #        cv2.line(out_img, (idx,int(slope_left_idx)),(idx,int(slope_left_idx)), (0,255,0), 5)
-            # cv2.line(out_img, (idx,int(slope_right_idx)),(idx,int(slope_right_idx)), (0,255,255), 5)
-    
-    # print(slope_left[0], slope_right[0])
     return out_img, slope_value
     
 def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty):
@@ -378,25 +342,19 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-
     def calculate_velocity_and_angle(self, slope_value):
         velocity = 0.2
-        
         angle = (slope_value)/625
-        # if slope_right:
-        #    angle = (slope_right - b_slope_right)/500
-        print("angle : ", angle)
-        
         return velocity, angle
 
-    def twist_publisher(self):
+    def twist_publisher(self, filter_thr_dict, base_slope):
         rate = rospy.Rate(10) # 10hz
         while not rospy.is_shutdown():
             _, original_image = self.capture.read()
 
             birdeye_image = birdeye_warp(original_image)
-            filtered_birdeye = color_gradient_filter(birdeye_image)
-            sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
+            filtered_birdeye = color_gradient_filter(birdeye_image, filter_thr_dict)
+            sliding_window, slope_value = detect_lane_pixels(filtered_birdeye, base_slope)
 
             cv2.imshow('original_image', original_image)
             cv2.imshow('birdeye_image', birdeye_image)
@@ -407,6 +365,11 @@ class lane_keeping_module:
 
             msg = TwistStamped()
             velocity, angle = self.calculate_velocity_and_angle(slope_value)
+
+            print('-------------------------------')
+            print('Slope : ', round(slope_value, 2))
+            print('Angle : ', round(angle, 3))
+
             msg.twist.linear.x = velocity
             msg.twist.angular.z = angle
             self.twist_pub.publish(msg)
@@ -415,13 +378,22 @@ class lane_keeping_module:
         self.capture.release()
         cv2.destroyAllWindows()
 
-def f(x, m, n):
-    y = m*x + n
-    return y
-
 if __name__ == '__main__':
     rospy.init_node('lane_keeping_module')
 
+    ### Tunable Parameter
+    # TODO : get from cfg
+    filter_thr_dict = {
+        'saturation_thr' : (150, 200),
+        'x_grad_thr' : (0, 100),
+        'red_thr' : (215,255)
+    }
+
+    base_slope = {
+        'left' : 80,
+        'right' : 200
+    }
+
     ic = lane_keeping_module()
     ic.config_image_source()
-    ic.twist_publisher()
+    ic.twist_publisher(filter_thr_dict, base_slope)
