@@ -129,7 +129,7 @@ def detect_lane_pixels(filtered_img):
     num = 0
     # for Left Lane
     for window in range(windows_num):
-        if left_cnt > 10:
+        if left_cnt > 12:
             break
         # Identify window boundaries in x and y (and right and left)
         
@@ -169,7 +169,7 @@ def detect_lane_pixels(filtered_img):
     num = 0
     # for Right Lane
     for window in range(windows_num):
-        if right_cnt > 5:
+        if right_cnt > 12:
             break
         if not isCurve:
             win_y_low = filtered_img.shape[0] - (num+1)*window_height
