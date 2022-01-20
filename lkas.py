@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from turtle import right
 import numpy as np
 import rospy
 import cv2
@@ -110,7 +111,7 @@ def calculate_sliding_window(filtered_img):
     window_width = 10
     # The part recognized from both edges is ignored
     x_margin = 3
-    consecutive_y_margin = 50
+    consecutive_y_margin = 70
     # The x of succesive sliding windows should not differ by more than this value
     noise_threshold = 15
     # number of sliding window should larger than window_threshold
@@ -159,8 +160,11 @@ def calculate_sliding_window(filtered_img):
     left_slope_2 = -1
     right_slope_1 = -1
     right_slope_2 = -1
+    first_left_x_margin = 0
+    first_right_x_margin = 0
 
     if isLeftValid:
+        first_left_x_margin = lw_arr[0][0]
         try:
             left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr], [y * window_height for (x, y) in lw_arr], 1)[0]))
             # left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y * window_height for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]))
@@ -182,6 +186,7 @@ def calculate_sliding_window(filtered_img):
             isLeftValid = False
 
     if isRightValid:
+        first_right_x_margin = filtered_img.shape[1] - rw_arr[0][0]
         try:
             right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr], [y * window_height for (x, y) in rw_arr], 1)[0]))
             # right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y * window_height for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]))
@@ -203,7 +208,7 @@ def calculate_sliding_window(filtered_img):
             isRightValid = False
 
     return out_img, left_slope_1, left_slope_2, right_slope_1, right_slope_2, \
-        isLeftValid, isRightValid
+        isLeftValid, isRightValid, first_left_x_margin, first_right_x_margin
 
 class lane_keeping_module:
     def __init__(self, config_dict):
@@ -215,6 +220,8 @@ class lane_keeping_module:
         self.steer_sensitivity = config_dict['steer_sensitivity']
         self.debug_window = config_dict['debug_window']
 
+        self.image_width = 320
+        self.image_height = 240
         self.turn_state = turnState.FORWARD
 
         if self.debug_window:
@@ -251,63 +258,63 @@ class lane_keeping_module:
         if mode == 'webcam':
             # VideoCapture(n) : n th input device (PC : 0, minicar : 1)
             self.capture = cv2.VideoCapture(1)
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
         elif mode == 'video':
             video_file = './test_video.avi'
             img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
-            width = 320
-            height = 240
-            dsize = (width, height)
+            dsize = (self.image_width, self.image_height)
             self.capture = cv2.VideoCapture(video_file)
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
 
-    def calculate_velocity_and_angle(self, ls1, ls2, rs1, rs2, lv, rv):
+    def calculate_velocity_and_angle(self, ls1, ls2, rs1, rs2, lv, rv, lx, rx):
         # Tunable parameter
         left_ground_truth = 7
         right_ground_truth = -7
-        left_turn_ground_truth = -25
-        right_turn_ground_truth = 25
+        left_turn_ground_truth = -20
+        right_turn_ground_truth = 20
         curve_threshold = 8
-
 
         velocity = self.velocity
         target_angle = 0
 
         if self.turn_state == turnState.LEFT:
-            if (lv and abs(ls1 - ls2) < 0.5) or (rv and abs(rs1 - rs2) < 0.5):
+            if (lv and ls1 > 0):
                 self.turn_state = turnState.FORWARD
             if rv:
-                target_angle = rs2 - left_turn_ground_truth
+                target_angle = (rx - self.image_height / 6) / 10
             else:
-                target_angle = left_turn_ground_truth / 10
+                target_angle = left_turn_ground_truth / 40
         elif self.turn_state == turnState.RIGHT:
-            if (lv and abs(ls1 - ls2) < 0.5) or (rv and abs(rs1 - rs2) < 0.5):
+            if (rv and rs1 < 0):
                 self.turn_state = turnState.FORWARD
             if lv:
-                target_angle = ls2 - right_turn_ground_truth
+                target_angle = (lx - self.image_height / 6) / 10
             else:
-                target_angle = right_turn_ground_truth / 10
+                target_angle = right_turn_ground_truth / 40
         else:
-            if lv and ls1 < 0 and ls1 - ls2 > curve_threshold:
-                self.turn_state = turnState.LEFT
-            if rv and rs1 > 0 and rs2 - rs1 > curve_threshold:
-                self.turn_state = turnState.RIGHT
-
-            if rv:
-                target_angle = rs1 - right_ground_truth
+            # If two lines are valid, determine by first x position
+            if lv and rv:
+                if ls1 < right_ground_truth and rs1 < right_ground_truth * 3:
+                    self.turn_state = turnState.LEFT
+                if rs1 > left_ground_truth and ls1 > left_ground_truth * 3:
+                    self.turn_state = turnState.RIGHT
+                target_angle = (rx - lx) / 10
+            elif rv:
+                target_angle = right_ground_truth - rs1
             elif lv:
-                target_angle = ls1 - left_ground_truth
+                target_angle = left_ground_truth - ls1
 
         if self.debug_window:
             if lv:
-                print('left :', ls1, ls2)
+                print('left :', ls1, ls2, lx)
             if rv:
-                print('right :', rs1, rs2)
+                print('right :', rs1, rs2, rx)
 
         target_angle = target_angle * self.steer_sensitivity
-        
+
+        # positive for left turn        
         return velocity, target_angle
 
     def svl_spinner(self):
@@ -333,7 +340,7 @@ class lane_keeping_module:
 
         birdeye_image = birdeye_warp(image_np, self.birdeye_warp_param)
         filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-        sliding_window, ls1, ls2, rs1, rs2, lv, rv = calculate_sliding_window(filtered_birdeye)
+        sliding_window, ls1, ls2, rs1, rs2, lv, rv, lx, rx = calculate_sliding_window(filtered_birdeye)
 
         if self.debug_window:
             cv2.imshow('TrackBar', self.trackbar_img)
@@ -343,7 +350,7 @@ class lane_keeping_module:
             cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
 
         msg = TwistStamped()
-        velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv)
+        velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv, lx, rx)
 
         if self.debug_window:
             print('-------------------------------')
