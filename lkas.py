@@ -115,6 +115,7 @@ def calculate_sliding_window(filtered_img):
     noise_threshold = 15
     # number of sliding window should larger than window_threshold
     window_threshold = 8
+    curve_threshold = 15
 
     out_img = np.dstack((filtered_img, filtered_img, filtered_img))*255
     window_height = np.int(filtered_img.shape[0]/windows_num)
@@ -129,8 +130,8 @@ def calculate_sliding_window(filtered_img):
         window_top = np.int(window_height * (windows_num - window_idx - 1))
         window_bottom = np.int(window_height * (windows_num - window_idx))
 
-        leftx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,:x_mid], axis=0), -1, window_height // 2)
-        rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid:], axis=0), 1, window_height // 2)
+        leftx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,:x_mid], axis=0), -1, window_height // 3)
+        rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid:], axis=0), 1, window_height // 3)
         
         if leftx > x_margin and leftx < x_mid - x_margin:
             if not lw_arr:
@@ -154,45 +155,55 @@ def calculate_sliding_window(filtered_img):
     ### Fit a first order polynomial to each sliding windows
     isLeftValid = len(lw_arr) >= window_threshold
     isRightValid = len(rw_arr) >= window_threshold
+    left_slope_1 = -1
+    left_slope_2 = -1
+    right_slope_1 = -1
+    right_slope_2 = -1
 
     if isLeftValid:
         try:
-            # 
-            left_slope_1 = np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]*-1
-            left_slope_2 = np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]*-1
-            # left_lane_angle = math.degrees(math.atan((left_slope_1 + left_slope_2) / 2))
+            left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr], [y * window_height for (x, y) in lw_arr], 1)[0]))
+            # left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y * window_height for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]))
+            left_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y * window_height for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]))
+
+            if left_slope_1 > 0:
+                left_slope_1 = 90 - left_slope_1
+            elif left_slope_1 < 0:
+                left_slope_1 = -90 - left_slope_1
+            
+            if left_slope_2 > 0:
+                left_slope_2 = 90 - left_slope_2
+            elif left_slope_2 < 0:
+                left_slope_2 = -90 - left_slope_2
+
+            if abs(left_slope_1 - left_slope_2) > curve_threshold:
+                isLeftValid = False
         except:
             isLeftValid = False
 
     if isRightValid:
         try:
-            right_slope_1 = np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]*-1
-            right_slope_2 = np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]*-1
-            # right_lane_angle = math.degrees(math.atan((right_slope_1 + right_slope_2) / 2))
+            right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr], [y * window_height for (x, y) in rw_arr], 1)[0]))
+            # right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y * window_height for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]))
+            right_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y * window_height for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]))
+
+            if right_slope_1 > 0:
+                right_slope_1 = 90 - right_slope_1
+            elif right_slope_1 < 0:
+                right_slope_1 = -90 - right_slope_1
+            
+            if right_slope_2 > 0:
+                right_slope_2 = 90 - right_slope_2
+            elif right_slope_2 < 0:
+                right_slope_2 = -90 - right_slope_2
+            
+            if abs(right_slope_1 - right_slope_2) > curve_threshold:
+                isLeftValid = False
         except:
             isRightValid = False
 
     return out_img, left_slope_1, left_slope_2, right_slope_1, right_slope_2, \
         isLeftValid, isRightValid
-    
-def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty):
-    global X_M_PER_PIX
-    global Y_M_PER_PIX
-    # Define y-value where we want radius of curvature
-    # I'll choose the maximum y-value, corresponding to the bottom of the image
-    y_eval = np.max(ploty)
-    left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
-    right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
-
-    # Fit new polynomials to x,y in world space
-    left_fit_cr = np.polyfit(lefty*Y_M_PER_PIX, leftx*X_M_PER_PIX, 2)
-    right_fit_cr = np.polyfit(righty*Y_M_PER_PIX, rightx*X_M_PER_PIX, 2)
-    # Calculate the new radii of curvature
-    left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*Y_M_PER_PIX + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-    right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*Y_M_PER_PIX + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
-    # Now our radius of curvature is in meters
-
-    return left_curverad, right_curverad
 
 class lane_keeping_module:
     def __init__(self, config_dict):
@@ -252,16 +263,50 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-    def calculate_velocity_and_angle(self, angle_value):
-        velocity = self.velocity
-        if angle_value > 0:
-            target_angle = 90 - angle_value
-        elif angle_value < 0:
-            target_angle = -90 - angle_value
-        else:
-            target_angle = 0
+    def calculate_velocity_and_angle(self, ls1, ls2, rs1, rs2, lv, rv):
+        # Tunable parameter
+        left_ground_truth = 7
+        right_ground_truth = -7
+        left_turn_ground_truth = -25
+        right_turn_ground_truth = 25
+        curve_threshold = 8
 
-        target_angle = target_angle * self.steer_sensitivity * -1
+
+        velocity = self.velocity
+        target_angle = 0
+
+        if self.turn_state == turnState.LEFT:
+            if (lv and abs(ls1 - ls2) < 0.5) or (rv and abs(rs1 - rs2) < 0.5):
+                self.turn_state = turnState.FORWARD
+            if rv:
+                target_angle = rs2 - left_turn_ground_truth
+            else:
+                target_angle = left_turn_ground_truth / 10
+        elif self.turn_state == turnState.RIGHT:
+            if (lv and abs(ls1 - ls2) < 0.5) or (rv and abs(rs1 - rs2) < 0.5):
+                self.turn_state = turnState.FORWARD
+            if lv:
+                target_angle = ls2 - right_turn_ground_truth
+            else:
+                target_angle = right_turn_ground_truth / 10
+        else:
+            if lv and ls1 < 0 and ls1 - ls2 > curve_threshold:
+                self.turn_state = turnState.LEFT
+            if rv and rs1 > 0 and rs2 - rs1 > curve_threshold:
+                self.turn_state = turnState.RIGHT
+
+            if rv:
+                target_angle = rs1 - right_ground_truth
+            elif lv:
+                target_angle = ls1 - left_ground_truth
+
+        if self.debug_window:
+            if lv:
+                print('left :', ls1, ls2)
+            if rv:
+                print('right :', rs1, rs2)
+
+        target_angle = target_angle * self.steer_sensitivity
         
         return velocity, target_angle
 
@@ -302,6 +347,7 @@ class lane_keeping_module:
 
         if self.debug_window:
             print('-------------------------------')
+            print('State : ', self.turn_state)
             print('Angle : ', round(angle, 3))
 
         msg.twist.linear.x = velocity
@@ -338,10 +384,11 @@ class lane_keeping_module:
                 cv2.imshow('TrackBar', self.trackbar_img)
 
             msg = TwistStamped()
-            velocity, angle = self.calculate_velocity_and_angle(slope_value)
+            velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv)
 
             if self.debug_window:
                 print('-------------------------------')
+                print('State : ', self.turn_state)
                 print('Angle : ', round(angle, 3))
 
             msg.twist.linear.x = velocity
