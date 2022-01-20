@@ -116,7 +116,7 @@ def calculate_sliding_window(filtered_img):
     noise_threshold = 15
     # number of sliding window should larger than window_threshold
     window_threshold = 8
-    curve_threshold = 15
+    # curve_threshold = 15
 
     out_img = np.dstack((filtered_img, filtered_img, filtered_img))*255
     window_height = np.int(filtered_img.shape[0]/windows_num)
@@ -164,50 +164,63 @@ def calculate_sliding_window(filtered_img):
     first_right_x_margin = 0
 
     if isLeftValid:
-        first_left_x_margin = lw_arr[0][0]
         try:
             left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr], [y * window_height for (x, y) in lw_arr], 1)[0]))
             # left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y * window_height for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]))
-            left_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y * window_height for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]))
+            # left_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y * window_height for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]))
 
             if left_slope_1 > 0:
                 left_slope_1 = 90 - left_slope_1
             elif left_slope_1 < 0:
                 left_slope_1 = -90 - left_slope_1
             
-            if left_slope_2 > 0:
-                left_slope_2 = 90 - left_slope_2
-            elif left_slope_2 < 0:
-                left_slope_2 = -90 - left_slope_2
+            # if left_slope_2 > 0:
+            #     left_slope_2 = 90 - left_slope_2
+            # elif left_slope_2 < 0:
+            #     left_slope_2 = -90 - left_slope_2
 
-            if abs(left_slope_1 - left_slope_2) > curve_threshold:
-                isLeftValid = False
+            # if abs(left_slope_1 - left_slope_2) > curve_threshold:
+            #     isLeftValid = False
         except:
             isLeftValid = False
 
     if isRightValid:
-        first_right_x_margin = filtered_img.shape[1] - rw_arr[0][0]
         try:
             right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr], [y * window_height for (x, y) in rw_arr], 1)[0]))
             # right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y * window_height for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]))
-            right_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y * window_height for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]))
+            # right_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y * window_height for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]))
 
-            if right_slope_1 > 0:
-                right_slope_1 = 90 - right_slope_1
-            elif right_slope_1 < 0:
-                right_slope_1 = -90 - right_slope_1
+            # if right_slope_1 > 0:
+            #     right_slope_1 = 90 - right_slope_1
+            # elif right_slope_1 < 0:
+            #     right_slope_1 = -90 - right_slope_1
             
-            if right_slope_2 > 0:
-                right_slope_2 = 90 - right_slope_2
-            elif right_slope_2 < 0:
-                right_slope_2 = -90 - right_slope_2
+            # if right_slope_2 > 0:
+            #     right_slope_2 = 90 - right_slope_2
+            # elif right_slope_2 < 0:
+            #     right_slope_2 = -90 - right_slope_2
             
-            if abs(right_slope_1 - right_slope_2) > curve_threshold:
-                isLeftValid = False
+            # if abs(right_slope_1 - right_slope_2) > curve_threshold:
+            #     isLeftValid = False
         except:
             isRightValid = False
 
-    return out_img, left_slope_1, left_slope_2, right_slope_1, right_slope_2, \
+    if isLeftValid and isRightValid:
+        left_idx = 0
+        right_idx = 0
+        while lw_arr[left_idx][1] != rw_arr[right_idx][1]:
+            if lw_arr[left_idx][1] > rw_arr[right_idx][1]:
+                right_idx += 1
+            else:
+                left_idx += 1
+        first_left_x_margin = lw_arr[left_idx][0]
+        first_right_x_margin = filtered_img.shape[1] - rw_arr[right_idx][0]
+    elif isLeftValid:
+        first_left_x_margin = lw_arr[0][0]
+    elif isRightValid:
+        first_right_x_margin = filtered_img.shape[1] - rw_arr[0][0]
+
+    return out_img, left_slope_1, left_slope_2, \
         isLeftValid, isRightValid, first_left_x_margin, first_right_x_margin
 
 class lane_keeping_module:
@@ -268,49 +281,46 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
 
-    def calculate_velocity_and_angle(self, ls1, ls2, rs1, rs2, lv, rv, lx, rx):
+    def calculate_velocity_and_angle(self, ls, rs, lv, rv, lx, rx):
         # Tunable parameter
         left_ground_truth = 7
         right_ground_truth = -7
-        left_turn_ground_truth = -20
-        right_turn_ground_truth = 20
-        curve_threshold = 8
 
         velocity = self.velocity
         target_angle = 0
 
         if self.turn_state == turnState.LEFT:
-            if (lv and ls1 > 0):
+            if (lv and ls > 0):
                 self.turn_state = turnState.FORWARD
             if rv:
                 target_angle = (rx - self.image_height / 6) / 10
             else:
-                target_angle = left_turn_ground_truth / 40
+                target_angle = left_ground_truth
         elif self.turn_state == turnState.RIGHT:
-            if (rv and rs1 < 0):
+            if (rv and rs < 0):
                 self.turn_state = turnState.FORWARD
             if lv:
-                target_angle = (lx - self.image_height / 6) / 10
+                target_angle = (self.image_height / 6 - lx) / 10
             else:
-                target_angle = right_turn_ground_truth / 40
+                target_angle = right_ground_truth
         else:
             # If two lines are valid, determine by first x position
             if lv and rv:
-                if ls1 < right_ground_truth and rs1 < right_ground_truth * 3:
+                if ls < right_ground_truth and rs < right_ground_truth * 3:
                     self.turn_state = turnState.LEFT
-                if rs1 > left_ground_truth and ls1 > left_ground_truth * 3:
+                if rs > left_ground_truth and ls > left_ground_truth * 3:
                     self.turn_state = turnState.RIGHT
                 target_angle = (rx - lx) / 10
             elif rv:
-                target_angle = right_ground_truth - rs1
+                target_angle = (rx - self.image_height / 8) / 10
             elif lv:
-                target_angle = left_ground_truth - ls1
+                target_angle = (self.image_height / 8 - lx) / 10
 
         if self.debug_window:
             if lv:
-                print('left :', ls1, ls2, lx)
+                print('left :', ls, lx)
             if rv:
-                print('right :', rs1, rs2, rx)
+                print('right :', rs, rx)
 
         target_angle = target_angle * self.steer_sensitivity
 
@@ -340,7 +350,7 @@ class lane_keeping_module:
 
         birdeye_image = birdeye_warp(image_np, self.birdeye_warp_param)
         filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-        sliding_window, ls1, ls2, rs1, rs2, lv, rv, lx, rx = calculate_sliding_window(filtered_birdeye)
+        sliding_window, ls, rs, lv, rv, lx, rx = calculate_sliding_window(filtered_birdeye)
 
         if self.debug_window:
             cv2.imshow('TrackBar', self.trackbar_img)
@@ -350,7 +360,7 @@ class lane_keeping_module:
             cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
 
         msg = TwistStamped()
-        velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv, lx, rx)
+        velocity, angle = self.calculate_velocity_and_angle(ls, rs, lv, rv, lx, rx)
 
         if self.debug_window:
             print('-------------------------------')
@@ -381,7 +391,7 @@ class lane_keeping_module:
 
             birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
             filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-            sliding_window, ls1, ls2, rs1, rs2, lv, rv = calculate_sliding_window(filtered_birdeye)
+            sliding_window, ls, rs, lv, rv, lx, rx = calculate_sliding_window(filtered_birdeye)
 
             if self.debug_window:
                 cv2.imshow('original_image', original_image)
@@ -391,7 +401,7 @@ class lane_keeping_module:
                 cv2.imshow('TrackBar', self.trackbar_img)
 
             msg = TwistStamped()
-            velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv)
+            velocity, angle = self.calculate_velocity_and_angle(ls, rs, lv, rv, lx, rx)
 
             if self.debug_window:
                 print('-------------------------------')
