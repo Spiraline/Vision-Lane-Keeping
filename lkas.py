@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from turtle import right
 import numpy as np
 import rospy
 import cv2
@@ -220,7 +219,7 @@ def calculate_sliding_window(filtered_img):
     elif isRightValid:
         first_right_x_margin = filtered_img.shape[1] - rw_arr[0][0]
 
-    return out_img, left_slope_1, left_slope_2, \
+    return out_img, left_slope_1, right_slope_1, \
         isLeftValid, isRightValid, first_left_x_margin, first_right_x_margin
 
 class lane_keeping_module:
