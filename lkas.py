@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from turtle import window_height
 import numpy as np
 import rospy
 import cv2
@@ -11,12 +12,14 @@ from geometry_msgs.msg import TwistStamped
 X_M_PER_PIX = 3.7/70
 Y_M_PER_PIX = 30/720 # meters per pixel in y dimension
 
-def find_firstfit(binary_array, direction, lower_threshold=20) :
+def find_firstfit(binary_array, direction, lower_threshold=20):
+    # direction : -1 (right to left), 1 (left to right)
     start, end = (binary_array.shape[0]-1, -1) if direction == -1 else (0, binary_array.shape[0])
-    for i in range(start, end, direction) :
-        if binary_array[i] > lower_threshold :
+    for i in range(start, end, direction):
+        # If value is larger than threshold, it is white image
+        if binary_array[i] > lower_threshold:
             return i
-    return np.argmax(binary_array)
+    return -1
 
 def color_gradient_filter(img, filter_thr_dict):
     s_thresh = filter_thr_dict['saturation_thr']
@@ -98,17 +101,61 @@ def birdeye_warp(img, birdeye_warp_param):
 
 def detect_lane_pixels(filtered_img):
     ##### Tunable parameter
-    firstfit_window_height = 100
     windows_num = 24
-    margin = 30 # Set the width of the windows +/- margin
-    minpix = 10 # Set minimum number of pixels found to recenter window
-
-
+    window_width = 10
+    # The part recognized from both edges is ignored
+    x_margin = 3
+    # The x of succesive sliding windows should not differ by more than this value
+    noise_threshold = 12
 
     out_img = np.dstack((filtered_img, filtered_img, filtered_img))*255
-    midpoint = np.int(filtered_img.shape[1]/2)
-    leftx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,:midpoint], axis=0), 1)
-    rightx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,midpoint:], axis=0), -1) + midpoint
+    window_height = np.int(filtered_img.shape[0]/windows_num)
+    x_mid = np.int(filtered_img.shape[1]/2)
+
+    left_window_arr = []
+    right_window_arr = []
+    for window_idx in range(windows_num):
+        window_top = np.int(window_height * (windows_num - window_idx - 1))
+        window_bottom = np.int(window_height * (windows_num - window_idx))
+
+        leftx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,:x_mid], axis=0), -1, window_height // 2)
+        rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid:], axis=0), 1, window_height // 2)
+        
+        if leftx > x_margin and leftx < x_mid - x_margin:
+            if not left_window_arr or abs(left_window_arr[-1][0] - leftx) < noise_threshold * (window_idx - left_window_arr[-1][1]):
+                left_window_arr.append((leftx, window_idx))
+                cv2.rectangle(out_img,(leftx-window_width,window_bottom),(leftx,window_top),(0,255,0), 2)
+        if rightx > x_margin and rightx < x_mid - x_margin:
+            if not right_window_arr or abs(right_window_arr[-1][0] - (rightx + x_mid)) < noise_threshold * (window_idx - right_window_arr[-1][1]):
+                right_window_arr.append((rightx + x_mid, window_idx))
+                cv2.rectangle(out_img,(rightx + x_mid,window_bottom),(rightx + x_mid + window_width,window_top),(0,255,0), 2) 
+
+    ### Fit a first order polynomial to each
+    left_lane_err = len(left_window_arr) < 5
+    right_lane_err = len(right_window_arr) < 5
+
+    if not left_lane_err:
+        try:
+            linear_slope_left = np.polyfit([x for (x, y) in left_window_arr], [y for (x, y) in left_window_arr], 1)[0]*-1
+            left_lane_angle = math.degrees(math.atan(linear_slope_left))
+        except:
+            left_lane_err = True
+
+    if not right_lane_err:
+        try:
+            linear_slope_right = np.polyfit([x for (x, y) in right_window_arr], [y for (x, y) in right_window_arr], 1)[0]*-1
+            right_lane_angle = math.degrees(math.atan(linear_slope_right))
+        except:
+            right_lane_err = True
+        
+    if not left_lane_err and not right_lane_err:
+        print('Hi', left_lane_angle, right_lane_angle)
+
+    return out_img, 0
+
+    # Get x position on firstfit_window's height
+    leftx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,:x_mid], axis=0), 1)
+    rightx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,x_mid:], axis=0), -1) + x_mid
     window_height = np.int(filtered_img.shape[0]/windows_num)
     
     nonzero = filtered_img.nonzero()
@@ -125,7 +172,7 @@ def detect_lane_pixels(filtered_img):
     
     left_cnt = 0
     right_cnt = 0
-    isCurve = False # TODO : Do we need this variable?
+    isCurve = False
     num = 0
     # for Left Lane
     for window in range(windows_num):
@@ -156,7 +203,7 @@ def detect_lane_pixels(filtered_img):
             if max_x_idx - min_x_idx > 20:
                 leftx_current = np.int(np.median(nonzerox[good_left_inds]))
             ## straight
-            else:    
+            else:
                 leftx_current = np.int(np.median(nonzerox[good_left_inds]))
 
         elif len(good_left_inds) < minpix:
@@ -236,8 +283,6 @@ def detect_lane_pixels(filtered_img):
 
     out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
     out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-
-    print("# SLOPE VALUE:",angle_value)
 
     return out_img, angle_value # out_image = sliding window image
     
@@ -329,7 +374,7 @@ class lane_keeping_module:
         
         return velocity, target_angle
 
-    def lgsvl_spinner(self):
+    def svl_spinner(self):
         self.image_sub = rospy.Subscriber('/simulator/camera_node/image/compressed', CompressedImage, self.image_callback)
         rospy.spin()
 
@@ -352,7 +397,7 @@ class lane_keeping_module:
 
         birdeye_image = birdeye_warp(image_np, self.birdeye_warp_param)
         filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-        sliding_window, angle_value = detect_lane_pixels(filtered_birdeye)
+        sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
 
         if self.debug_window:
             cv2.imshow('TrackBar', self.trackbar_img)
@@ -362,10 +407,12 @@ class lane_keeping_module:
             cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
 
         msg = TwistStamped()
-        velocity, angle = self.calculate_velocity_and_angle(angle_value)
+        velocity, angle = self.calculate_velocity_and_angle(slope_value)
 
-        print('-------------------------------')
-        print('Angle : ', round(angle, 3))
+        if self.debug_window:
+            print('-------------------------------')
+            print('Slope # : ', slope_value)
+            print('Angle : ', round(angle, 3))
 
         msg.twist.linear.x = velocity
         msg.twist.angular.z = angle
@@ -403,8 +450,10 @@ class lane_keeping_module:
             msg = TwistStamped()
             velocity, angle = self.calculate_velocity_and_angle(slope_value)
 
-            print('-------------------------------')
-            print('Angle : ', round(angle, 3))
+            if self.debug_window:
+                print('-------------------------------')
+                print('Slope # : ', slope_value)
+                print('Angle : ', round(angle, 3))
 
             msg.twist.linear.x = velocity
             msg.twist.angular.z = angle
@@ -422,15 +471,16 @@ if __name__ == '__main__':
         print('Should make config file in config folder!')
         exit(1)
 
-    # TODO : exception checker
+    rospy.init_node('lkas')
 
-    rospy.init_node('lane_keeping_module')
-
-    # Mode : webcam, lgsvl, video
+    # Mode : webcam, svl, video
     ic = lane_keeping_module(config_dict)
-    if config_dict['mode'] == 'lgsvl':
-        ic.lgsvl_spinner()
-    else:
+    if config_dict['mode'] == 'svl':
+        ic.svl_spinner()
+    elif config_dict['mode'] in ['webcam', 'video']:
         ic.config_image_source(config_dict['mode'])
         ic.twist_publisher()
+    else:
+        print('Should select appropriate mode! (webcam, svl, video)')
+        exit(1)
 
