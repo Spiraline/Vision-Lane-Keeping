@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-from turtle import window_height
 import numpy as np
 import rospy
 import cv2
 import math
 import yaml
+from enum import Enum, auto
 
 from sensor_msgs.msg import CompressedImage
 from geometry_msgs.msg import TwistStamped
 
 X_M_PER_PIX = 3.7/70
 Y_M_PER_PIX = 30/720 # meters per pixel in y dimension
+
+class turnState(Enum):
+    FORWARD = auto()
+    LEFT = auto()
+    RIGHT = auto()
 
 def find_firstfit(binary_array, direction, lower_threshold=20):
     # direction : -1 (right to left), 1 (left to right)
@@ -99,21 +104,27 @@ def birdeye_warp(img, birdeye_warp_param):
     # Return the resulting image and matrix
     return birdeye_warped
 
-def detect_lane_pixels(filtered_img):
+def calculate_sliding_window(filtered_img):
     ##### Tunable parameter
     windows_num = 24
     window_width = 10
     # The part recognized from both edges is ignored
     x_margin = 3
+    consecutive_y_margin = 50
     # The x of succesive sliding windows should not differ by more than this value
-    noise_threshold = 12
+    noise_threshold = 15
+    # number of sliding window should larger than window_threshold
+    window_threshold = 8
 
     out_img = np.dstack((filtered_img, filtered_img, filtered_img))*255
     window_height = np.int(filtered_img.shape[0]/windows_num)
+    consecutive_y_idx = consecutive_y_margin // window_height
     x_mid = np.int(filtered_img.shape[1]/2)
 
-    left_window_arr = []
-    right_window_arr = []
+    # lw_arr : left sliding window array's position
+    # rw_arr : right sliding window array's position
+    lw_arr = []
+    rw_arr = []
     for window_idx in range(windows_num):
         window_top = np.int(window_height * (windows_num - window_idx - 1))
         window_bottom = np.int(window_height * (windows_num - window_idx))
@@ -122,169 +133,47 @@ def detect_lane_pixels(filtered_img):
         rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid:], axis=0), 1, window_height // 2)
         
         if leftx > x_margin and leftx < x_mid - x_margin:
-            if not left_window_arr or abs(left_window_arr[-1][0] - leftx) < noise_threshold * (window_idx - left_window_arr[-1][1]):
-                left_window_arr.append((leftx, window_idx))
+            if not lw_arr:
+                lw_arr.append((leftx, window_idx))
+                cv2.rectangle(out_img,(leftx-window_width,window_bottom),(leftx,window_top),(0,255,0), 2)
+            elif (window_idx - lw_arr[-1][1]) > consecutive_y_idx:
+                pass
+            elif abs(lw_arr[-1][0] - leftx) < noise_threshold * (window_idx - lw_arr[-1][1]):
+                lw_arr.append((leftx, window_idx))
                 cv2.rectangle(out_img,(leftx-window_width,window_bottom),(leftx,window_top),(0,255,0), 2)
         if rightx > x_margin and rightx < x_mid - x_margin:
-            if not right_window_arr or abs(right_window_arr[-1][0] - (rightx + x_mid)) < noise_threshold * (window_idx - right_window_arr[-1][1]):
-                right_window_arr.append((rightx + x_mid, window_idx))
+            if not rw_arr:
+                rw_arr.append((rightx + x_mid, window_idx))
+                cv2.rectangle(out_img,(rightx + x_mid,window_bottom),(rightx + x_mid + window_width,window_top),(0,255,0), 2)
+            elif (window_idx - rw_arr[-1][1]) > consecutive_y_idx:
+                pass
+            elif abs(rw_arr[-1][0] - (rightx + x_mid)) < noise_threshold * (window_idx - rw_arr[-1][1]):
+                rw_arr.append((rightx + x_mid, window_idx))
                 cv2.rectangle(out_img,(rightx + x_mid,window_bottom),(rightx + x_mid + window_width,window_top),(0,255,0), 2) 
 
-    ### Fit a first order polynomial to each
-    left_lane_err = len(left_window_arr) < 5
-    right_lane_err = len(right_window_arr) < 5
+    ### Fit a first order polynomial to each sliding windows
+    isLeftValid = len(lw_arr) >= window_threshold
+    isRightValid = len(rw_arr) >= window_threshold
 
-    if not left_lane_err:
+    if isLeftValid:
         try:
-            linear_slope_left = np.polyfit([x for (x, y) in left_window_arr], [y for (x, y) in left_window_arr], 1)[0]*-1
-            left_lane_angle = math.degrees(math.atan(linear_slope_left))
+            # 
+            left_slope_1 = np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]*-1
+            left_slope_2 = np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]*-1
+            # left_lane_angle = math.degrees(math.atan((left_slope_1 + left_slope_2) / 2))
         except:
-            left_lane_err = True
+            isLeftValid = False
 
-    if not right_lane_err:
+    if isRightValid:
         try:
-            linear_slope_right = np.polyfit([x for (x, y) in right_window_arr], [y for (x, y) in right_window_arr], 1)[0]*-1
-            right_lane_angle = math.degrees(math.atan(linear_slope_right))
+            right_slope_1 = np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]*-1
+            right_slope_2 = np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]*-1
+            # right_lane_angle = math.degrees(math.atan((right_slope_1 + right_slope_2) / 2))
         except:
-            right_lane_err = True
-        
-    if not left_lane_err and not right_lane_err:
-        print('Hi', left_lane_angle, right_lane_angle)
+            isRightValid = False
 
-    return out_img, 0
-
-    # Get x position on firstfit_window's height
-    leftx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,:x_mid], axis=0), 1)
-    rightx_base = find_firstfit(np.sum(filtered_img[-firstfit_window_height:,x_mid:], axis=0), -1) + x_mid
-    window_height = np.int(filtered_img.shape[0]/windows_num)
-    
-    nonzero = filtered_img.nonzero()
-    nonzeroy = np.array(nonzero[0])
-    nonzerox = np.array(nonzero[1])
-
-    # Current positions to be updated for each window
-    leftx_current = leftx_base
-    rightx_current = rightx_base
-
-    # Create empty lists to receive left and right lane pixel indices
-    left_lane_inds = []
-    right_lane_inds = []
-    
-    left_cnt = 0
-    right_cnt = 0
-    isCurve = False
-    num = 0
-    # for Left Lane
-    for window in range(windows_num):
-        if left_cnt > 12:
-            break
-        # Identify window boundaries in x and y (and right and left)
-        
-        if not isCurve:
-            win_y_low = filtered_img.shape[0] - (num+1)*window_height
-            win_y_high = filtered_img.shape[0] - num*window_height
-            num += 1
-        win_xleft_low = leftx_current - margin
-        win_xleft_high = leftx_current + margin
-        
-        # Draw the windows on the visualization image
-        cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-        
-        # Identify the nonzero pixels in x and y within the window
-        good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
-        
-        # If you found > minpix pixels, recenter next window on their mean position
-        if len(good_left_inds) > minpix:
-            min_x_idx = np.int(np.min(nonzerox[good_left_inds]))
-            max_x_idx = np.int(np.max(nonzerox[good_left_inds]))
-            min_y_idx = np.int(np.min(nonzeroy[good_left_inds]))
-            max_y_idx = np.int(np.max(nonzeroy[good_left_inds]))
-            ## curve
-            if max_x_idx - min_x_idx > 20:
-                leftx_current = np.int(np.median(nonzerox[good_left_inds]))
-            ## straight
-            else:
-                leftx_current = np.int(np.median(nonzerox[good_left_inds]))
-
-        elif len(good_left_inds) < minpix:
-            left_cnt += 1
-
-        # Append these indices to the lists
-        left_lane_inds.append(good_left_inds)
-
-    isCurve = False
-    num = 0
-    # for Right Lane
-    for window in range(windows_num):
-        if right_cnt > 12:
-            break
-        if not isCurve:
-            win_y_low = filtered_img.shape[0] - (num+1)*window_height
-            win_y_high = filtered_img.shape[0] - num*window_height
-            num += 1
-        win_xright_low = rightx_current - margin
-        win_xright_high = rightx_current + margin
-        cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
-        good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
-        right_lane_inds.append(good_right_inds)
-
-        if len(good_right_inds) > minpix:        
-            rightx_current = np.int(np.median(nonzerox[good_right_inds]))
-        elif len(good_right_inds) < minpix:
-            right_cnt += 1
-
-    left_line_err = 0
-    right_line_err = 0
-
-    ### Concatenate the arrays of indices
-    if len(left_lane_inds) > 0:
-        left_lane_inds = np.concatenate(left_lane_inds)
-    else:
-        left_line_err = 1
-    right_lane_inds = np.concatenate(right_lane_inds)
-    
-    ### Extract left and right line pixel positions
-    leftx = nonzerox[left_lane_inds] # x
-    lefty = nonzeroy[left_lane_inds] # y
-    rightx = nonzerox[right_lane_inds]
-    righty = nonzeroy[right_lane_inds] 
-
-    ### Fit a first order polynomial to each
-    try:
-        linear_slope_left = np.polyfit(leftx, lefty, 1)[0]*-1
-        left_lane_angle = math.degrees(math.atan(linear_slope_left))
-    except:
-        left_line_err = 1
-
-    try:
-        linear_slope_right = np.polyfit(rightx, righty, 1)[0] * -1        
-        right_lane_angle = math.degrees(math.atan(linear_slope_right))
-    except:
-        right_line_err = 1
-
-    ### Generate x and y values for plotting
-    angle_value = 0
-
-    # Left Lane Fail (Only Right Lane detected)
-    if left_line_err == 1 and right_line_err == 0:
-        angle_value = right_lane_angle
-        if angle_value > 0:
-            angle_value = 0
-            
-    # Right Lane Fail (Only Left Lane detected)
-    elif left_line_err == 0 and right_line_err == 1:
-        angle_value = left_lane_angle
-        if angle_value < 0:
-            angle_value = 0
-    
-    # If two Lane are detected, see right lane
-    elif left_line_err == 0 and right_line_err == 0:
-        angle_value = right_lane_angle
-
-    out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-    out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-
-    return out_img, angle_value # out_image = sliding window image
+    return out_img, left_slope_1, left_slope_2, right_slope_1, right_slope_2, \
+        isLeftValid, isRightValid
     
 def determine_curvature(ploty, left_fit, right_fit, leftx, lefty, rightx, righty):
     global X_M_PER_PIX
@@ -314,6 +203,8 @@ class lane_keeping_module:
         self.velocity = config_dict['velocity']
         self.steer_sensitivity = config_dict['steer_sensitivity']
         self.debug_window = config_dict['debug_window']
+
+        self.turn_state = turnState.FORWARD
 
         if self.debug_window:
             self.trackbar_img = np.zeros((1,400), np.uint8)
@@ -397,7 +288,7 @@ class lane_keeping_module:
 
         birdeye_image = birdeye_warp(image_np, self.birdeye_warp_param)
         filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-        sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
+        sliding_window, ls1, ls2, rs1, rs2, lv, rv = calculate_sliding_window(filtered_birdeye)
 
         if self.debug_window:
             cv2.imshow('TrackBar', self.trackbar_img)
@@ -407,11 +298,10 @@ class lane_keeping_module:
             cv2.imshow('filtered_birdeye', (filtered_birdeye*255).astype(np.uint8))
 
         msg = TwistStamped()
-        velocity, angle = self.calculate_velocity_and_angle(slope_value)
+        velocity, angle = self.calculate_velocity_and_angle(ls1, ls2, rs1, rs2, lv, rv)
 
         if self.debug_window:
             print('-------------------------------')
-            print('Slope # : ', slope_value)
             print('Angle : ', round(angle, 3))
 
         msg.twist.linear.x = velocity
@@ -438,7 +328,7 @@ class lane_keeping_module:
 
             birdeye_image = birdeye_warp(original_image, self.birdeye_warp_param)
             filtered_birdeye = color_gradient_filter(birdeye_image, self.filter_thr_dict)
-            sliding_window, slope_value = detect_lane_pixels(filtered_birdeye)
+            sliding_window, ls1, ls2, rs1, rs2, lv, rv = calculate_sliding_window(filtered_birdeye)
 
             if self.debug_window:
                 cv2.imshow('original_image', original_image)
@@ -452,7 +342,6 @@ class lane_keeping_module:
 
             if self.debug_window:
                 print('-------------------------------')
-                print('Slope # : ', slope_value)
                 print('Angle : ', round(angle, 3))
 
             msg.twist.linear.x = velocity
