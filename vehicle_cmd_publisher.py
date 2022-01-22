@@ -10,7 +10,7 @@ def twist_cb(data):
 if __name__ == '__main__':
     rospy.init_node('vehicle_cmd_publihser')
 
-    vehicle_pub = rospy.Publisher("vehicle_cmd_lgsvl", VehicleCmd, queue_size = 10)
+    vehicle_pub = rospy.Publisher("vehicle_cmd", VehicleCmd, queue_size = 10)
 
     rospy.Subscriber("/twist_cmd", TwistStamped, twist_cb)
 
