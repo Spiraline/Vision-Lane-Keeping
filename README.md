@@ -17,8 +17,8 @@ pip install opencv-python
 2. Click **Open Browser**, which will automatically show **wise.svlsimulator.com** website. Sign up and sign in with your account.
 
 <div style="text-align:center;">
-    <img src="https://user-images.githubusercontent.com/44594966/152669703-290e0d81-3327-45de-ad52-a971e02d9794.PNG" alt="svl_main" height="300"/>
-    <img src="https://user-images.githubusercontent.com/44594966/153361526-bcaa5fe1-07ab-4291-8397-745666cd5932.png" alt="svl_sign_in" height="300"/>
+    <img src="https://user-images.githubusercontent.com/44594966/152669703-290e0d81-3327-45de-ad52-a971e02d9794.PNG" alt="svl_main" height="270"/>
+    <img src="https://user-images.githubusercontent.com/44594966/153361526-bcaa5fe1-07ab-4291-8397-745666cd5932.png" alt="svl_sign_in" height="270"/>
 </div>
 
 3. Navigate to the **Clusters** tab and make your cluster.
