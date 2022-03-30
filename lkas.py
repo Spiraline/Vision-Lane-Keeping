@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from turtle import right
 import numpy as np
 import rospy
 import cv2
@@ -175,33 +174,20 @@ def calculate_sliding_window(filtered_img):
     ### Fit a first order polynomial to each sliding windows
     isLeftValid = len(lw_arr) >= window_threshold
     isRightValid = len(rw_arr) >= window_threshold
-    left_slope_1 = -1
-    left_slope_2 = -1
-    right_slope_1 = -1
-    right_slope_2 = -1
+    left_slope = -1
+    right_slope = -1
     first_left_x_margin = 0
     first_right_x_margin = 0
 
     if isLeftValid:
         try:
-            left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr], [y * window_height for (x, y) in lw_arr], 1)[0]))
-            # left_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[:len(lw_arr) // 2]], [y * window_height for (x, y) in lw_arr[:len(lw_arr) // 2]], 1)[0]))
-            # left_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr[len(lw_arr) // 2:]], [y * window_height for (x, y) in lw_arr[len(lw_arr) // 2:]], 1)[0]))
+            left_slope = math.degrees(math.atan(np.polyfit([x for (x, y) in lw_arr], [y * window_height for (x, y) in lw_arr], 1)[0]))
+            if left_slope > 0:
+                left_slope = 90 - left_slope
+            elif left_slope < 0:
+                left_slope = -90 - left_slope
 
-            if left_slope_1 > 0:
-                left_slope_1 = 90 - left_slope_1
-            elif left_slope_1 < 0:
-                left_slope_1 = -90 - left_slope_1
-            
-            # if left_slope_2 > 0:
-            #     left_slope_2 = 90 - left_slope_2
-            # elif left_slope_2 < 0:
-            #     left_slope_2 = -90 - left_slope_2
-
-            # if abs(left_slope_1 - left_slope_2) > curve_threshold:
-            #     isLeftValid = False
-
-            if left_slope_1 < -slope_threshold:
+            if left_slope < -slope_threshold:
                 isLeftValid = False
                 
         except:
@@ -209,24 +195,13 @@ def calculate_sliding_window(filtered_img):
 
     if isRightValid:
         try:
-            right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr], [y * window_height for (x, y) in rw_arr], 1)[0]))
-            # right_slope_1 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[:len(rw_arr) // 2]], [y * window_height for (x, y) in rw_arr[:len(rw_arr) // 2]], 1)[0]))
-            # right_slope_2 = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr[len(rw_arr) // 2:]], [y * window_height for (x, y) in rw_arr[len(rw_arr) // 2:]], 1)[0]))
+            right_slope = math.degrees(math.atan(np.polyfit([x for (x, y) in rw_arr], [y * window_height for (x, y) in rw_arr], 1)[0]))
+            if right_slope > 0:
+                right_slope = 90 - right_slope
+            elif right_slope < 0:
+                right_slope = -90 - right_slope
 
-            if right_slope_1 > 0:
-                right_slope_1 = 90 - right_slope_1
-            elif right_slope_1 < 0:
-                right_slope_1 = -90 - right_slope_1
-            
-            # if right_slope_2 > 0:
-            #     right_slope_2 = 90 - right_slope_2
-            # elif right_slope_2 < 0:
-            #     right_slope_2 = -90 - right_slope_2
-            
-            # if abs(right_slope_1 - right_slope_2) > curve_threshold:
-            #     isLeftValid = False
-
-            if right_slope_1 > slope_threshold:
+            if right_slope > slope_threshold:
                 isRightValid = False
         except:
             isRightValid = False
@@ -254,12 +229,12 @@ def calculate_sliding_window(filtered_img):
     
     if isLeftValid:
         prev_left_x = lw_arr[0][0]
-        prev_left_slope = left_slope_1
+        prev_left_slope = left_slope
     if isRightValid:
         prev_right_x = rw_arr[0][0]
-        prev_right_slope = right_slope_1
+        prev_right_slope = right_slope
 
-    return out_img, left_slope_1, right_slope_1, \
+    return out_img, left_slope, right_slope, \
         isLeftValid, isRightValid, first_left_x_margin, first_right_x_margin
 
 class lane_keeping_module:
@@ -320,8 +295,6 @@ class lane_keeping_module:
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
         elif mode == 'video':
             video_file = './test_video.avi'
-            img = cv2.imread('test2.png', cv2.IMREAD_COLOR)
-            dsize = (self.image_width, self.image_height)
             self.capture = cv2.VideoCapture(video_file)
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
