@@ -17,13 +17,20 @@ class turnState(Enum):
     LEFT = auto()
     RIGHT = auto()
 
-def find_firstfit(binary_array, direction, lower_threshold=20):
+def find_firstfit(binary_array, direction, lower_threshold=35):
     # direction : -1 (right to left), 1 (left to right)
-    start, end = (binary_array.shape[0]-1, -1) if direction == -1 else (0, binary_array.shape[0])
-    for i in range(start, end, direction):
-        # If value is larger than threshold, it is white image
-        if binary_array[i] > lower_threshold:
-            return i
+    if direction == 1:
+        start, end = (0, binary_array.shape[0])
+        for i in range(start, end-3, direction):
+            # If value is larger than threshold, it is white image
+            if binary_array[i]+binary_array[i+1]+binary_array[i+2]+binary_array[i+3]> lower_threshold:
+                return i
+    else:
+        start, end = (binary_array.shape[0]-1, -1)
+        for i in range(start, end+3, direction):
+            # If value is larger than threshold, it is white image
+            if binary_array[i]+binary_array[i-1]+binary_array[i-2]+binary_array[i-3]> lower_threshold:
+                return i
     return -1
 
 def color_gradient_filter(img, filter_thr_dict):
@@ -34,19 +41,25 @@ def color_gradient_filter(img, filter_thr_dict):
     b_thresh = filter_thr_dict['blue_thr']
     img = np.copy(img)
     
-    R = img[:,:,0]
+    R = img[:,:,2]
     G = img[:,:,1]
-    B = img[:,:,2]
+    B = img[:,:,0]
     
     # Threshold red channel
     rbinary = np.zeros_like(R)
+    rbinary2 = np.zeros_like(R)
     rbinary[(R >= r_thresh[0]) & (R <= r_thresh[1])] = 1
-    # 
+    rbinary2[(R >= 205) & (R <= 250)] = 1
 
     gbinary = np.zeros_like(G)
+    gbinary2 = np.zeros_like(G)
     gbinary[(G >= g_thresh[0]) & (G <= g_thresh[1])] = 1
+    gbinary2[(G >= 205) & (G <= 250)] = 1
+
     bbinary = np.zeros_like(B)
+    bbinary2 = np.zeros_like(B)    
     bbinary[(B >= b_thresh[0]) & (B <= b_thresh[1])] = 1
+    bbinary2[(B >= 195) & (B <= 250)] = 1
 
     # Convert to HLS color space and separate the s channel
     hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)#.astype(np.float)
@@ -72,7 +85,7 @@ def color_gradient_filter(img, filter_thr_dict):
     # combined_binary[(s_binary == 1) | (sxbinary == 1)] = 1
     # combined_binary[(s_binary == 1) | (sxbinary == 1) & (rbinary == 1)] = 1
     
-    combined_binary[(s_binary == 1) & (sxbinary == 1) & (rbinary == 1) & (gbinary == 1) & (bbinary == 1)] = 1
+    combined_binary[(((rbinary == 1) & (gbinary == 1) & (bbinary == 1)) | ((rbinary2 == 1) & (gbinary2 == 1) & (bbinary2 == 1)))] = 1
     
     return combined_binary
 
@@ -125,10 +138,11 @@ def calculate_sliding_window(filtered_img):
     windows_num = 24
     window_width = 10
     # The part recognized from both edges is ignored
-    x_margin = 3
+    outer_margin = 5
+    inner_margin = 35
     consecutive_y_margin = 100
     # The x of succesive sliding windows should not differ by more than this value
-    noise_threshold = 30
+    noise_threshold = 17
     # number of sliding window should larger than window_threshold
     window_threshold = 6
     # curve_threshold = 15
@@ -147,10 +161,10 @@ def calculate_sliding_window(filtered_img):
         window_top = np.int(window_height * (windows_num - window_idx - 1))
         window_bottom = np.int(window_height * (windows_num - window_idx))
 
-        leftx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,:x_mid], axis=0), -1, window_height // 2)
-        rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid:], axis=0), 1, window_height // 2)
+        leftx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,:x_mid-inner_margin], axis=0), -1)
+        rightx = find_firstfit(np.sum(filtered_img[window_top:window_bottom,x_mid+inner_margin:], axis=0), 1)+inner_margin
         
-        if leftx > x_margin and leftx < x_mid - x_margin:
+        if leftx > outer_margin and leftx < x_mid - inner_margin:
             if not lw_arr:
                 # if prev_left_x == -1 or abs(prev_left_x - leftx) < noise_threshold:
                 lw_arr.append((leftx, window_idx))
@@ -160,7 +174,7 @@ def calculate_sliding_window(filtered_img):
             elif abs(lw_arr[-1][0] - leftx) < noise_threshold:
                 lw_arr.append((leftx, window_idx))
                 cv2.rectangle(out_img,(leftx-window_width,window_bottom),(leftx,window_top),(0,255,0), 2)
-        if rightx > x_margin and rightx < x_mid - x_margin:
+        if rightx > inner_margin and rightx < x_mid - outer_margin:
             if not rw_arr:
                 # if prev_right_x == -1 or abs(prev_right_x - (rightx+x_mid)) < noise_threshold:
                 rw_arr.append((rightx + x_mid, window_idx))
@@ -261,11 +275,11 @@ class lane_keeping_module:
             cv2.namedWindow('TrackBar')
 
             # Move Window Location              #col    #row
-            cv2.moveWindow('original_image',    350*0,  350*0)
-            cv2.moveWindow('birdeye_image',     350*0,  350*1)
-            cv2.moveWindow('sliding_window',    350*1,  350*0)
-            cv2.moveWindow('filtered_birdeye',  350*1,  350*1)
-            cv2.moveWindow('TrackBar',          350*2,  350*0)
+            cv2.moveWindow('original_image',    450*0,  350*0)
+            cv2.moveWindow('birdeye_image',     450*0,  350*1)
+            cv2.moveWindow('sliding_window',    450*1,  350*0)
+            cv2.moveWindow('filtered_birdeye',  450*1,  350*1)
+            cv2.moveWindow('TrackBar',          450*2,  350*0)
 
             # Create Trackbar
             cv2.createTrackbar("[clr]x_grad_min", "TrackBar", self.filter_thr_dict['x_grad_thr'][0], 255, self.onChange)
@@ -301,8 +315,12 @@ class lane_keeping_module:
 
     def calculate_velocity_and_angle(self, ls, rs, lv, rv, lx, rx):
         # Tunable parameter
-        left_ground_truth = 7
-        right_ground_truth = -7
+        left_ground_truth = 4
+        right_ground_truth = -4
+        left_steer = 13
+        left_steer_threshold = 2
+        right_steer = -13
+        right_steer_threshold = -2
 
         velocity = self.velocity
         target_angle = 0
@@ -311,16 +329,16 @@ class lane_keeping_module:
             if (lv and ls > 0):
                 self.turn_state = turnState.FORWARD
             if rv:
-                target_angle = (rx - self.image_height / 6) / 10
+                target_angle = max((rx - self.image_height / 6)/3, left_steer_threshold)
             else:
-                target_angle = left_ground_truth
+                target_angle = left_steer
         elif self.turn_state == turnState.RIGHT:
             if (rv and rs < 0):
                 self.turn_state = turnState.FORWARD
             if lv:
-                target_angle = (self.image_height / 6 - lx) / 10
+                target_angle = min((self.image_height / 6 - lx)/3, right_steer_threshold)
             else:
-                target_angle = right_ground_truth
+                target_angle = right_steer
         else:
             # If two lines are valid, determine by first x position
             if lv and rv:
@@ -328,11 +346,19 @@ class lane_keeping_module:
                     self.turn_state = turnState.LEFT
                 if rs > left_ground_truth and ls > left_ground_truth * 3:
                     self.turn_state = turnState.RIGHT
-                target_angle = (rx - lx) / 10
+                target_angle = (rx - lx) / 15
             elif rv:
                 target_angle = (rx - self.image_height / 8) / 10
+                if rs < right_ground_truth * 3:
+                    self.turn_state = turnState.LEFT
+                if rs > left_ground_truth:
+                    self.turn_state = turnState.RIGHT
             elif lv:
                 target_angle = (self.image_height / 8 - lx) / 10
+                if ls < right_ground_truth:
+                    self.turn_state = turnState.LEFT
+                if ls > left_ground_truth * 3:
+                    self.turn_state = turnState.RIGHT
 
         if self.debug_window:
             if lv:
