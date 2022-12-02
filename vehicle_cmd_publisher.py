@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import rospy
 from autoware_msgs.msg import VehicleCmd
 from geometry_msgs.msg import TwistStamped
