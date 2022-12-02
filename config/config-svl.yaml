@@ -11,6 +11,6 @@ birdeye_warp_param:
 filter_thr_dict:
   saturation_thr: [12,255]
   x_grad_thr: [0,255]
-  red_thr: [0,255]
+  red_thr: [100,255]
   green_thr: [0,255]
-  blue_thr: [100,255]
+  blue_thr: [0,255]
