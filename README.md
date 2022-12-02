@@ -2,13 +2,20 @@
 
 ### Requirement
 - Python 3.X
-- ROS
+- Ubuntu 18.04
+- ROS Melodic
 - Vision Sensor (from ``SVL`` or ``Real Camera``)
 - Actuator (from ``SVL`` or ``Real Car``)
 
 ### Installation
 ```
-pip install opencv-python
+sudo apt-get install python3-pip -y
+pip3 install rospkg scikit-build opencv-python
+
+sudo apt-get install ros-melodic-rosbridge-suite ros-melodic-autoware-msgs ros-melodic-nmea-msgs -y
+
+cd svl/setup
+python3 -m pip install -r requirements.txt --user .
 ```
 
 ## Usage with SVL Simulator
@@ -36,7 +43,7 @@ pip install opencv-python
     <img src="https://user-images.githubusercontent.com/44594966/160767398-e7ca4b2c-6a73-49a2-a516-e53644870032.png" alt="cluster" height="300"/>
 </div>
 
-5. Change configuration of **Main Camera** as below and save.
+5. Change configuration of **Main Camera** as below and save. You can copy asset ID when you click `ID` icon.
 
 <div style="text-align:center;">
     <img src="https://user-images.githubusercontent.com/44594966/160768109-8667bcb7-e395-449e-9c8a-81eb0a984b35.png" alt="cluster" height="400"/>
@@ -45,35 +52,34 @@ pip install opencv-python
 6. Navigate to the **Simulations** tab and click **Add New** button. Fill the blank as below.
     - Simulation Name: As your wish
     - Cluster: a cluster you made in **3**
-    - Runtime Template: Random Traffic
-    - Map: CubeTown
-    - Vehicle: Lexus2016RXHybrid (with configuration you made in **4**)
-    - Autopilot: Autoware.AI v1.14
-
-<div style="text-align:center;">
-    <img src="https://user-images.githubusercontent.com/44594966/160768668-7be761c7-63a3-4d6d-8e85-8b7799147193.png" alt="cluster" height="300"/>
-    <img src="https://user-images.githubusercontent.com/44594966/160769391-951883b4-7b18-4fa3-a16a-d5956ed253ce.png" alt="cluster" height="300"/>
-</div>
+    - Runtime Template: API Only
 
 7. Run rosbridge node
     ```
     roslaunch rosbridge_server rosbridge_websocket.launch
     ```
 
-8. Click **Run Simulation** and click play icon on simulator. If the count of topic increases in bridge tab (plug icon), SVL connected with bridge successfully.
+8. Click **Run Simulation**.
 
 <div style="text-align:center;">
     <img src="https://user-images.githubusercontent.com/44594966/160772542-93f6ff64-9e4e-46a5-8681-748ed94e245c.png" alt="cluster" height="300"/>
     <img src="https://user-images.githubusercontent.com/44594966/160772743-3cabb046-2705-4ddf-9c32-8bee8301f619.png" alt="cluster" height="300"/>
 </div>
 
-9. Copy `config/config-svl.yaml` to `config/config`.
-
-10. Run LKAS node.
+9. Change `ASSET_ID` in API script (`svl/script/1_cubetown_base.py`) into value you copied in **5** and run the script. If the count of topic increases in bridge tab (plug icon), SVL connected with bridge successfully.
 
     ```
-    python lkas.py
-    python vehicle_cmd_publisher.py
+    cd svl/script
+    python3 1_cubetown_base.py
+    ```
+
+10. Copy `config/config-svl.yaml` to `config/config`.
+
+11. Run LKAS node.
+
+    ```
+    python3 lkas.py
+    python3 vehicle_cmd_publisher.py
     ```
 
 ## Demo
